@@ -1,0 +1,10 @@
+{
+  "name": "Quartet Mittaristo",
+  "short_name": "Quartet",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#050b12",
+  "theme_color": "#050b12",
+  "icons": []
+}

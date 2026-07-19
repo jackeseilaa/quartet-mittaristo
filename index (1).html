@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#050b12">
+<link rel="manifest" href="manifest.json">
+<title>Quartet — Mittaristo</title>
+<style>
+  :root{
+    --bg-deep:#050b12;
+    --bg-panel:#0d1b26;
+    --bg-panel-raised:#122431;
+    --hairline:#1c3341;
+    --cyan:#3fd0c9;
+    --cyan-dim:#1f6b66;
+    --text-hi:#eaf6f5;
+    --text-mid:#7fa3ab;
+    --text-low:#3f5b63;
+    --amber:#e8a23d;
+    --danger:#e05a4e;
+    --wedge-red:#ff3d2e;
+    --wedge-green:#3ddc84;
+    --font-display:ui-monospace, 'SF Mono', 'Menlo', 'Consolas', monospace;
+    --font-label:-apple-system, 'SF Pro Text', system-ui, sans-serif;
+  }
+
+  /* Night mode: red-only palette, preserves night vision at the helm */
+  body.night{
+    --bg-deep:#0a0000;
+    --bg-panel:#140302;
+    --bg-panel-raised:#1c0503;
+    --hairline:#3a0f0a;
+    --cyan:#e8433d;
+    --cyan-dim:#7a201c;
+    --text-hi:#ff6b62;
+    --text-mid:#8a3a35;
+    --text-low:#4a201d;
+    --amber:#e05a2e;
+    --danger:#ff4136;
+    --wedge-red:#ff4136;
+    --wedge-green:#7a201c;
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    background:var(--bg-deep);
+    color:var(--text-hi);
+    font-family:var(--font-label);
+    overflow-x:hidden;
+    transition:background .3s ease, color .3s ease;
+    cursor:none;
+  }
+
+  .topbar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:10px 16px;
+    border-bottom:1px solid var(--hairline);
+    background:var(--bg-panel);
+  }
+  .topbar h1{
+    font-family:var(--font-display);
+    font-size:15px;
+    font-weight:600;
+    letter-spacing:.14em;
+    margin:0;
+    color:var(--text-hi);
+    text-transform:uppercase;
+  }
+  .topbar h1 span{ color:var(--text-mid); font-weight:400; }
+  .topbar h1 .version{
+    color:var(--cyan);
+    font-size:11px;
+    letter-spacing:.05em;
+    margin-left:6px;
+  }
+
+  .topbar-right{ display:flex; align-items:center; gap:10px; }
+
+  .badge{
+    font-family:var(--font-display);
+    font-size:10px;
+    letter-spacing:.1em;
+    padding:4px 8px;
+    border-radius:3px;
+    border:1px solid var(--danger);
+    color:var(--danger);
+    text-transform:uppercase;
+  }
+
+  .night-toggle{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    background:var(--bg-panel-raised);
+    border:1px solid var(--hairline);
+    border-radius:20px;
+    padding:6px 12px;
+    font-family:var(--font-label);
+    font-size:12px;
+    color:var(--text-mid);
+    cursor:pointer;
+    user-select:none;
+  }
+  .night-toggle:active{ transform:scale(.97); }
+  .night-toggle .dot{
+    width:8px; height:8px; border-radius:50%;
+    background:var(--cyan);
+    transition:background .3s;
+  }
+
+  .grid{
+    display:grid;
+    grid-template-columns:1.1fr 1fr;
+    gap:1px;
+    background:var(--hairline);
+    min-height:calc(100vh - 49px);
+  }
+  @media (max-width:720px){
+    .grid{ grid-template-columns:1fr; }
+  }
+
+  .card{
+    background:var(--bg-panel);
+    padding:18px 20px;
+    display:flex;
+    flex-direction:column;
+  }
+  .card-label{
+    font-family:var(--font-display);
+    font-size:11px;
+    letter-spacing:.16em;
+    color:var(--text-mid);
+    text-transform:uppercase;
+    margin-bottom:6px;
+  }
+
+  /* --- Wind compass, the signature piece --- */
+  .wind-card{
+    grid-row:span 3;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+  }
+  .compass-wrap{ position:relative; width:min(78vw, 360px); aspect-ratio:1; }
+  .compass-wrap svg{ width:100%; height:100%; overflow:visible; }
+  .compass-ring{ fill:none; stroke:var(--hairline); stroke-width:1; }
+  .compass-tick{ stroke:var(--text-low); stroke-width:1; }
+  .compass-tick.major{ stroke:var(--cyan); stroke-width:2; }
+  .compass-label{
+    font-family:var(--font-display);
+    font-size:11px;
+    fill:var(--text-mid);
+    text-anchor:middle;
+  }
+  #windNeedle{ /* rotation handled purely via SVG transform attribute in JS, see animateNeedle() */ }
+  .needle-shape{ fill:var(--cyan); }
+  .needle-hub{ fill:var(--bg-panel); stroke:var(--cyan); stroke-width:2; }
+
+  .wind-readout{
+    position:absolute;
+    top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    pointer-events:none;
+  }
+  .wind-readout .aws{
+    font-family:var(--font-display);
+    font-size:44px;
+    font-weight:600;
+    line-height:1;
+    color:var(--text-hi);
+    font-variant-numeric:tabular-nums;
+  }
+  .wind-readout .unit{
+    font-family:var(--font-label);
+    font-size:12px;
+    color:var(--text-mid);
+    letter-spacing:.08em;
+    margin-top:2px;
+  }
+  .wind-caption{
+    margin-top:10px;
+    font-family:var(--font-display);
+    font-size:12px;
+    color:var(--text-mid);
+    letter-spacing:.05em;
+  }
+  .wind-caption b{ color:var(--cyan); font-weight:600; }
+
+  .wind-mode-toggle{ display:flex; gap:8px; margin-top:12px; }
+  .mode-btn{
+    font-family:var(--font-label);
+    font-size:12px;
+    padding:6px 14px;
+    border-radius:20px;
+    border:1px solid var(--hairline);
+    background:var(--bg-panel-raised);
+    color:var(--text-mid);
+    cursor:pointer;
+  }
+  .mode-btn.active{ border-color:var(--cyan); color:var(--cyan); }
+  .mode-btn:active{ transform:scale(.97); }
+
+  /* --- Big numeric readouts --- */
+  .num-card .value{
+    font-family:var(--font-display);
+    font-size:56px;
+    font-weight:600;
+    line-height:1;
+    color:var(--text-hi);
+    font-variant-numeric:tabular-nums;
+    display:flex;
+    align-items:baseline;
+    gap:8px;
+  }
+  .num-card .value .unit{
+    font-size:16px;
+    font-weight:400;
+    color:var(--text-mid);
+  }
+  .num-card .sub{
+    margin-top:8px;
+    font-family:var(--font-display);
+    font-size:13px;
+    color:var(--text-mid);
+    letter-spacing:.04em;
+  }
+
+  .split{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:1px;
+    background:var(--hairline);
+  }
+  .split .card{ background:var(--bg-panel); }
+
+  /* --- Depth bar --- */
+  .depth-bar-track{
+    margin-top:14px;
+    height:8px;
+    border-radius:4px;
+    background:var(--bg-panel-raised);
+    overflow:hidden;
+    position:relative;
+  }
+  .depth-bar-fill{
+    height:100%;
+    border-radius:4px;
+    background:var(--cyan);
+    transition:width .6s ease, background .3s ease;
+  }
+  .depth-bar-fill.warn{ background:var(--amber); }
+  .depth-bar-fill.danger{ background:var(--danger); }
+
+  /* --- Position card --- */
+  .pos-card{ grid-column:1 / -1; }
+  .pos-row{
+    display:flex;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:20px;
+    align-items:flex-end;
+  }
+  .pos-value{
+    font-family:var(--font-display);
+    font-size:22px;
+    color:var(--text-hi);
+    font-variant-numeric:tabular-nums;
+  }
+  .pos-group .card-label{ margin-bottom:4px; }
+
+  .status-line{
+    font-family:var(--font-display);
+    font-size:11px;
+    color:var(--text-low);
+    letter-spacing:.05em;
+  }
+
+  @media (pointer:fine){
+    body{ cursor:auto; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Quartet <span>· mittaristo</span> <span class="version" id="versionBadge">—</span></h1>
+  <div class="topbar-right">
+    <div class="badge" id="connBadge">Demo-data</div>
+    <div class="night-toggle" id="nightToggle" role="button" aria-label="Yövalotila">
+      <span class="dot"></span><span id="nightLabel">Yötila pois</span>
+    </div>
+  </div>
+</div>
+
+<div class="grid">
+
+  <div class="card wind-card">
+    <div class="compass-wrap">
+      <svg viewBox="0 0 300 300">
+        <circle class="compass-ring" cx="150" cy="150" r="130"/>
+        <circle class="compass-ring" cx="150" cy="150" r="98"/>
+        <g id="noGoZone"></g>
+        <g id="ticks"></g>
+        <g id="dirLabels"></g>
+        <g id="windNeedle">
+          <path class="needle-shape" d="M150,28 L160,150 L150,140 L140,150 Z"/>
+        </g>
+        <circle class="needle-hub" cx="150" cy="150" r="14"/>
+      </svg>
+      <div class="wind-readout">
+        <div class="aws" id="windAngleValue">—</div>
+        <div class="unit" id="windAngleUnit">AWA</div>
+      </div>
+    </div>
+    <div class="wind-mode-toggle" id="windModeToggle">
+      <button type="button" class="mode-btn active" data-mode="apparent">Näennäinen</button>
+      <button type="button" class="mode-btn" data-mode="true">Tosi</button>
+    </div>
+    <div class="wind-caption" id="noGoCaption" style="margin-top:2px; color:var(--text-low);">—</div>
+  </div>
+
+  <div class="card num-card">
+    <div class="card-label" id="windSpeedLabel">Tuulen nopeus</div>
+    <div class="value"><span id="windSpeedValue">—</span><span class="unit">m/s</span></div>
+  </div>
+
+  <div class="card num-card">
+    <div class="card-label">Nopeus (SOG)</div>
+    <div class="value"><span id="sogValue">—</span><span class="unit">kts</span></div>
+    <div class="sub">COG <span id="cogValue">—</span> · Loki (STW) <span id="stwValue">—</span> kt</div>
+  </div>
+
+  <div class="card num-card">
+    <div class="card-label">Syvyys (kölin alla)</div>
+    <div class="value"><span id="depthValue">—</span><span class="unit">m</span></div>
+    <div class="depth-bar-track"><div class="depth-bar-fill" id="depthBar" style="width:60%"></div></div>
+    <div class="sub" id="depthNote">Hälytysraja säädettävissä Quartetin syväyksen mukaan</div>
+  </div>
+
+  <div class="card pos-card">
+    <div class="pos-row">
+      <div class="pos-group">
+        <div class="card-label">Sijainti</div>
+        <div class="pos-value" id="posValue">— / —</div>
+      </div>
+      <div class="pos-group">
+        <div class="card-label">Aika</div>
+        <div class="pos-value" id="timeValue">—:—:—</div>
+      </div>
+      <div class="status-line" id="statusLine">Simuloitu data — ei yhteyttä SignalK-palvelimeen. Katso koodin lopusta connectToSignalK().</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ============================================================
+   DEMO-DATA-GENERAATTORI
+   Korvataan myöhemmin oikealla SignalK-yhteydellä, ks. lopussa
+   oleva connectToSignalK()-funktio (ei vielä kutsuttu).
+   ============================================================ */
+/* ============================================================
+   VERSIONUMERO — kasvatetaan jokaisen muutoksen yhteydessä,
+   niin näet suoraan käyttöliittymästä onko sinulla uusin versio.
+   ============================================================ */
+const APP_VERSION = 'v2.0.0';
+const APP_BUILD = '2026-07-19';
+document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
+
+const state = {
+  awa: 42,      // apparent wind angle, deg, 0 = keula
+  aws: 7.2,     // apparent wind speed, m/s
+  twa: 55,
+  tws: 8.4,     // true wind speed, m/s
+  sog: 6.1,
+  stw: 5.9,
+  cog: 214,
+  depth: 6.4,   // m kölin alla
+  lat: 60.1856,
+  lon: 25.0234
+};
+
+// Quartetin syväys — säädä oikeaan arvoon kun tiedossa
+const KEEL_DRAFT_WARN_M = 3.0;
+const KEEL_DRAFT_DANGER_M = 1.5;
+
+// Quartetin nousukulma — eri asteluku tosi- ja näennäiselle tuulelle, säädä tarpeen mukaan
+const NO_GO_ANGLE_TRUE_DEG = 25;
+const NO_GO_ANGLE_APPARENT_DEG = 18;
+
+let windMode = 'apparent'; // 'apparent' tai 'true' — kumpi näytetään nuolella ja isolla numerolla
+
+function wrap360(deg){ return ((deg % 360) + 360) % 360; }
+
+function randomWalk(value, step, min, max){
+  let v = value + (Math.random() - 0.5) * step;
+  if (v < min) v = min;
+  if (v > max) v = max;
+  return v;
+}
+
+function tick(){
+  state.awa = wrap360(state.awa + (Math.random() - 0.5) * 6);
+  state.aws = randomWalk(state.aws, 0.5, 1, 18);
+  state.twa = wrap360(state.awa + (Math.random() - 0.5) * 10);
+  state.tws = randomWalk(state.tws, 0.4, 1, 16);
+  state.sog = randomWalk(state.sog, 0.15, 0, 9);
+  state.stw = randomWalk(state.stw, 0.15, 0, 9);
+  state.cog = wrap360(state.cog + (Math.random() - 0.5) * 3);
+  state.depth = randomWalk(state.depth, 0.3, 0.8, 25);
+  state.lat += (Math.random() - 0.5) * 0.00006;
+  state.lon += (Math.random() - 0.5) * 0.00010;
+  render();
+}
+
+function fmtDeg(d){ return Math.round(d).toString().padStart(3,'0') + '°'; }
+
+function fmtLatLon(lat, lon){
+  const latDeg = Math.floor(Math.abs(lat));
+  const latMin = ((Math.abs(lat) - latDeg) * 60).toFixed(3);
+  const lonDeg = Math.floor(Math.abs(lon));
+  const lonMin = ((Math.abs(lon) - lonDeg) * 60).toFixed(3);
+  const ns = lat >= 0 ? 'N' : 'S';
+  const ew = lon >= 0 ? 'E' : 'W';
+  return `${latDeg}°${latMin}'${ns}  ${lonDeg}°${lonMin}'${ew}`;
+}
+
+function render(){
+  const activeAngle = windMode === 'apparent' ? state.awa : state.twa;
+  const activeSpeed = windMode === 'apparent' ? state.aws : state.tws;
+  document.getElementById('windAngleValue').textContent = `${Math.round(activeAngle)}°`;
+  document.getElementById('windAngleUnit').textContent = windMode === 'apparent' ? 'AWA' : 'TWA';
+  document.getElementById('windSpeedLabel').textContent = windMode === 'apparent' ? 'Tuulen nopeus (näennäinen)' : 'Tuulen nopeus (tosi)';
+  document.getElementById('windSpeedValue').textContent = activeSpeed.toFixed(1);
+  document.getElementById('noGoCaption').textContent = windMode === 'apparent'
+    ? `Punainen (STB) / vihreä (BB) = ei etene, < ${NO_GO_ANGLE_APPARENT_DEG}° näennäisestä tuulesta`
+    : `Punainen (STB) / vihreä (BB) = ei etene, < ${NO_GO_ANGLE_TRUE_DEG}° todellisesta tuulesta`;
+  document.getElementById('sogValue').textContent = state.sog.toFixed(1);
+  document.getElementById('cogValue').textContent = fmtDeg(state.cog);
+  document.getElementById('stwValue').textContent = state.stw.toFixed(1);
+  document.getElementById('depthValue').textContent = state.depth.toFixed(1);
+  document.getElementById('posValue').textContent = fmtLatLon(state.lat, state.lon);
+
+  const now = new Date();
+  document.getElementById('timeValue').textContent = now.toTimeString().slice(0,8);
+
+  // Neulan kierto hoidetaan animateNeedle()-silmukassa, ei täällä
+
+  const bar = document.getElementById('depthBar');
+  const pct = Math.max(4, Math.min(100, (state.depth / 20) * 100));
+  bar.style.width = pct + '%';
+  bar.classList.remove('warn','danger');
+  if (state.depth <= KEEL_DRAFT_DANGER_M) bar.classList.add('danger');
+  else if (state.depth <= KEEL_DRAFT_WARN_M) bar.classList.add('warn');
+}
+
+function buildCompass(){
+  const ticks = document.getElementById('ticks');
+  const labels = document.getElementById('dirLabels');
+  const cx = 150, cy = 150, rOuter = 130, rInner = 118, rLabel = 105;
+  for (let deg = 0; deg < 360; deg += 10) {
+    const major = deg % 30 === 0;
+    const rStart = major ? rInner - 8 : rInner;
+    const rad = (deg - 90) * Math.PI / 180;
+    const x1 = cx + rStart * Math.cos(rad);
+    const y1 = cy + rStart * Math.sin(rad);
+    const x2 = cx + rOuter * Math.cos(rad);
+    const y2 = cy + rOuter * Math.sin(rad);
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+    line.setAttribute('class', 'compass-tick' + (major ? ' major' : ''));
+    ticks.appendChild(line);
+  }
+  const dirs = [];
+  for (let d = 0; d < 360; d += 30) {
+    const label = d <= 180 ? d : 360 - d;
+    const text = label === 0 ? 'KEULA' : (label === 180 ? 'PERÄ' : `${label}°`);
+    dirs.push([d, text]);
+  }
+  dirs.forEach(([deg, txt]) => {
+    const rad = (deg - 90) * Math.PI / 180;
+    const x = cx + rLabel * Math.cos(rad);
+    const y = cy + rLabel * Math.sin(rad);
+    const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x', x); t.setAttribute('y', y + 4);
+    t.setAttribute('class', 'compass-label');
+    t.textContent = txt;
+    labels.appendChild(t);
+  });
+}
+
+function buildNoGoZone(){
+  const zone = document.getElementById('noGoZone');
+  const cx = 150, cy = 150, rOuter = 130, rInner = 60;
+  const toXY = (deg, r) => {
+    const rad = (deg - 90) * Math.PI / 180;
+    return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)];
+  };
+  const makeWedge = (id, startDeg, endDeg, colorVar) => {
+    const [ox1, oy1] = toXY(startDeg, rOuter);
+    const [ox2, oy2] = toXY(endDeg, rOuter);
+    const [ix1, iy1] = toXY(startDeg, rInner);
+    const [ix2, iy2] = toXY(endDeg, rInner);
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('id', id);
+    path.setAttribute('d',
+      `M ${ix1} ${iy1} L ${ox1} ${oy1} A ${rOuter} ${rOuter} 0 0 1 ${ox2} ${oy2} L ${ix2} ${iy2} A ${rInner} ${rInner} 0 0 0 ${ix1} ${iy1} Z`
+    );
+    path.setAttribute('fill', `var(${colorVar})`);
+    path.setAttribute('opacity', '0.28');
+    zone.appendChild(path);
+  };
+  const makeBoundaryLabel = (id, deg, text, colorVar) => {
+    const [x, y] = toXY(deg, rOuter + 14);
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('id', id);
+    t.setAttribute('x', x);
+    t.setAttribute('y', y + 4);
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('font-family', 'var(--font-display)');
+    t.setAttribute('font-size', '13');
+    t.setAttribute('font-weight', '600');
+    t.setAttribute('fill', `var(${colorVar})`);
+    t.textContent = text;
+    zone.appendChild(t);
+  };
+  // Oikea puoli (STB) punainen, vasen puoli (BB) vihreä — molemmille oma leveys tosi/näennäiselle tuulelle
+  makeWedge('noGoZoneApparentRight', 0, NO_GO_ANGLE_APPARENT_DEG, '--wedge-red');
+  makeWedge('noGoZoneApparentLeft', -NO_GO_ANGLE_APPARENT_DEG, 0, '--wedge-green');
+  makeWedge('noGoZoneTrueRight', 0, NO_GO_ANGLE_TRUE_DEG, '--wedge-red');
+  makeWedge('noGoZoneTrueLeft', -NO_GO_ANGLE_TRUE_DEG, 0, '--wedge-green');
+  makeBoundaryLabel('noGoLabelApparentRight', NO_GO_ANGLE_APPARENT_DEG, `${NO_GO_ANGLE_APPARENT_DEG}°`, '--wedge-red');
+  makeBoundaryLabel('noGoLabelApparentLeft', -NO_GO_ANGLE_APPARENT_DEG, `${NO_GO_ANGLE_APPARENT_DEG}°`, '--wedge-green');
+  makeBoundaryLabel('noGoLabelTrueRight', NO_GO_ANGLE_TRUE_DEG, `${NO_GO_ANGLE_TRUE_DEG}°`, '--wedge-red');
+  makeBoundaryLabel('noGoLabelTrueLeft', -NO_GO_ANGLE_TRUE_DEG, `${NO_GO_ANGLE_TRUE_DEG}°`, '--wedge-green');
+  updateNoGoVisibility();
+}
+
+function updateNoGoVisibility(){
+  const ids = {
+    apparent: ['noGoZoneApparentRight', 'noGoZoneApparentLeft', 'noGoLabelApparentRight', 'noGoLabelApparentLeft'],
+    true: ['noGoZoneTrueRight', 'noGoZoneTrueLeft', 'noGoLabelTrueRight', 'noGoLabelTrueLeft']
+  };
+  Object.entries(ids).forEach(([mode, elIds]) => {
+    elIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = (windMode === mode) ? '' : 'none';
+    });
+  });
+}
+
+document.getElementById('windModeToggle').addEventListener('click', (e) => {
+  const btn = e.target.closest('.mode-btn');
+  if (!btn) return;
+  windMode = btn.dataset.mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b === btn));
+  updateNoGoVisibility();
+  render();
+});
+
+document.getElementById('nightToggle').addEventListener('click', () => {
+  document.body.classList.toggle('night');
+  const isNight = document.body.classList.contains('night');
+  document.getElementById('nightLabel').textContent = isNight ? 'Yötila päällä' : 'Yötila pois';
+});
+
+let displayedNeedleAngle = 0;
+function shortestDelta(from, to){
+  return ((to - from + 540) % 360) - 180;
+}
+function animateNeedle(){
+  const target = windMode === 'apparent' ? state.awa : state.twa;
+  displayedNeedleAngle = wrap360(displayedNeedleAngle + shortestDelta(displayedNeedleAngle, target) * 0.12);
+  document.getElementById('windNeedle').setAttribute('transform', `rotate(${displayedNeedleAngle} 150 150)`);
+  requestAnimationFrame(animateNeedle);
+}
+
+buildCompass();
+buildNoGoZone();
+render();
+requestAnimationFrame(animateNeedle);
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch((err) => {
+      console.warn('Service worker ei rekisteröitynyt:', err);
+    });
+  });
+}
+setInterval(tick, 1200);
+
+/* ============================================================
+   TÄNNE TULEE OIKEA YHTEYS SIGNALK-PALVELIMEEN
+   Kun Raspberry Pi + SignalK on asennettu veneelle, korvaa
+   setInterval(tick, 1200) yllä kutsulla connectToSignalK(...)
+   ja päivitä state-oliota saapuvien deltaviestien mukaan.
+   ============================================================
+
+function connectToSignalK(host) {
+  const ws = new WebSocket(`ws://${host}/signalk/v1/stream?subscribe=all`);
+  ws.onmessage = (msg) => {
+    const delta = JSON.parse(msg.data);
+    (delta.updates || []).forEach(u => {
+      (u.values || []).forEach(v => {
+        switch (v.path) {
+          case 'environment.wind.angleApparent':
+            state.awa = wrap360(v.value * 180 / Math.PI); break;
+          case 'environment.wind.speedApparent':
+            state.aws = v.value * 1.94384; break; // m/s -> kt
+          case 'environment.depth.belowKeel':
+            state.depth = v.value; break;
+          case 'navigation.speedOverGround':
+            state.sog = v.value * 1.94384; break;
+          case 'navigation.courseOverGroundTrue':
+            state.cog = v.value * 180 / Math.PI; break;
+          case 'navigation.position':
+            state.lat = v.value.latitude; state.lon = v.value.longitude; break;
+        }
+      });
+    });
+    render();
+  };
+  ws.onopen = () => document.getElementById('connBadge').textContent = 'Yhteydessä';
+  ws.onclose = () => document.getElementById('connBadge').textContent = 'Yhteys katkesi';
+}
+// connectToSignalK('192.168.1.xxx:3000');
+*/
+</script>
+</body>
+</html>
