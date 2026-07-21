@@ -291,6 +291,7 @@
   <h1>Quartet <span>· mittaristo</span> <span class="version" id="versionBadge">—</span></h1>
   <div class="topbar-right">
     <div class="badge" id="connBadge">Demo-data</div>
+    <a href="kartta.html" style="display:flex; align-items:center; gap:6px; background:var(--bg-panel-raised); border:1px solid var(--hairline); border-radius:20px; padding:6px 12px; font-family:var(--font-label); font-size:12px; color:var(--text-mid); text-decoration:none;">Kartta</a>
     <div class="night-toggle" id="nightToggle" role="button" aria-label="Yövalotila">
       <span class="dot"></span><span id="nightLabel">Yötila pois</span>
     </div>
@@ -368,8 +369,8 @@
    VERSIONUMERO — kasvatetaan jokaisen muutoksen yhteydessä,
    niin näet suoraan käyttöliittymästä onko sinulla uusin versio.
    ============================================================ */
-const APP_VERSION = 'v2.0.0';
-const APP_BUILD = '2026-07-19';
+const APP_VERSION = 'v2.1.0';
+const APP_BUILD = '2026-07-21';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 const state = {

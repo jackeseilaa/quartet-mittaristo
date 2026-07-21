@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#050b12">
+<link rel="manifest" href="manifest.json">
+<title>Quartet — Kartta</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{
+    --bg-deep:#050b12;
+    --bg-panel:#0d1b26;
+    --bg-panel-raised:#122431;
+    --hairline:#1c3341;
+    --cyan:#3fd0c9;
+    --text-hi:#eaf6f5;
+    --text-mid:#7fa3ab;
+    --text-low:#3f5b63;
+    --amber:#e8a23d;
+    --danger:#e05a4e;
+    --ais-target:#e8a23d;
+    --font-display:ui-monospace, 'SF Mono', 'Menlo', 'Consolas', monospace;
+    --font-label:-apple-system, 'SF Pro Text', system-ui, sans-serif;
+  }
+  body.night{
+    --bg-deep:#0a0000;
+    --bg-panel:#140302;
+    --bg-panel-raised:#1c0503;
+    --hairline:#3a0f0a;
+    --cyan:#e8433d;
+    --text-hi:#ff6b62;
+    --text-mid:#8a3a35;
+    --text-low:#4a201d;
+    --amber:#e05a2e;
+    --danger:#ff4136;
+    --ais-target:#e05a2e;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; margin:0; }
+  body{
+    background:var(--bg-deep);
+    color:var(--text-hi);
+    font-family:var(--font-label);
+    overflow:hidden;
+    cursor:none;
+  }
+  @media (pointer:fine){ body{ cursor:auto; } }
+
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 16px;
+    border-bottom:1px solid var(--hairline);
+    background:var(--bg-panel);
+    position:relative; z-index:1000;
+  }
+  .topbar h1{
+    font-family:var(--font-display); font-size:15px; font-weight:600;
+    letter-spacing:.14em; margin:0; text-transform:uppercase;
+  }
+  .topbar h1 span{ color:var(--text-mid); font-weight:400; }
+  .topbar h1 .version{ color:var(--cyan); font-size:11px; margin-left:6px; }
+  .topbar-right{ display:flex; align-items:center; gap:8px; }
+  .icon-btn{
+    display:flex; align-items:center; gap:6px;
+    background:var(--bg-panel-raised);
+    border:1px solid var(--hairline);
+    border-radius:20px;
+    padding:6px 12px;
+    font-family:var(--font-label);
+    font-size:12px;
+    color:var(--text-mid);
+    cursor:pointer;
+    user-select:none;
+    text-decoration:none;
+  }
+  .icon-btn:active{ transform:scale(.97); }
+  .icon-btn .dot{ width:8px; height:8px; border-radius:50%; background:var(--cyan); }
+  .badge{
+    font-family:var(--font-display); font-size:10px; letter-spacing:.1em;
+    padding:4px 8px; border-radius:3px; border:1px solid var(--danger); color:var(--danger);
+    text-transform:uppercase;
+  }
+
+  #map{ position:absolute; top:49px; left:0; right:0; bottom:0; background:var(--bg-deep); }
+
+  /* Dark chrome for Leaflet's own controls so they match the instrument aesthetic */
+  .leaflet-control-zoom a{
+    background:var(--bg-panel) !important;
+    color:var(--text-hi) !important;
+    border-color:var(--hairline) !important;
+  }
+  .leaflet-control-attribution{
+    background:rgba(13,27,38,0.85) !important;
+    color:var(--text-mid) !important;
+    font-family:var(--font-label);
+    font-size:10px;
+  }
+  .leaflet-control-attribution a{ color:var(--cyan) !important; }
+
+  .own-ship-icon{
+    filter:drop-shadow(0 0 4px rgba(63,208,201,0.7));
+  }
+  .ais-icon{
+    display:flex; flex-direction:column; align-items:center;
+    pointer-events:none;
+  }
+  .ais-icon .tri{
+    width:0; height:0;
+    border-left:6px solid transparent;
+    border-right:6px solid transparent;
+    border-bottom:12px solid var(--ais-target);
+  }
+  .ais-label{
+    font-family:var(--font-display);
+    font-size:10px;
+    color:var(--ais-target);
+    background:rgba(5,11,18,0.75);
+    padding:1px 4px;
+    border-radius:2px;
+    margin-top:2px;
+    white-space:nowrap;
+  }
+
+  /* --- Settings drawer --- */
+  .drawer{
+    position:absolute; top:59px; right:10px; z-index:1000;
+    background:var(--bg-panel);
+    border:1px solid var(--hairline);
+    border-radius:10px;
+    padding:14px;
+    width:260px;
+    display:none;
+    font-family:var(--font-label);
+    font-size:12px;
+    color:var(--text-mid);
+  }
+  .drawer.open{ display:block; }
+  .drawer h3{
+    margin:0 0 10px; font-family:var(--font-display); font-size:11px;
+    letter-spacing:.12em; color:var(--text-hi); text-transform:uppercase;
+  }
+  .drawer label{ display:block; margin-bottom:4px; }
+  .drawer input{
+    width:100%; background:var(--bg-panel-raised); border:1px solid var(--hairline);
+    color:var(--text-hi); padding:6px 8px; border-radius:4px; font-family:var(--font-display);
+    font-size:12px; margin-bottom:10px;
+  }
+  .drawer .drawer-btn{
+    background:var(--bg-panel-raised); border:1px solid var(--cyan); color:var(--cyan);
+    padding:6px 12px; border-radius:6px; cursor:pointer; font-size:12px; width:100%;
+  }
+  .drawer .note{ font-size:10px; color:var(--text-low); margin-top:8px; line-height:1.5; }
+
+  .status-strip{
+    position:absolute; bottom:0; left:0; right:0; z-index:1000;
+    background:rgba(13,27,38,0.9);
+    border-top:1px solid var(--hairline);
+    padding:8px 16px;
+    display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px;
+    font-family:var(--font-display); font-size:11px; color:var(--text-mid);
+  }
+  body.night .status-strip{ background:rgba(20,3,2,0.9); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Quartet <span>· kartta</span> <span class="version" id="versionBadge">—</span></h1>
+  <div class="topbar-right">
+    <div class="badge" id="connBadge">Demo-data</div>
+    <a class="icon-btn" href="index.html">Mittaristo</a>
+    <div class="icon-btn" id="settingsToggle"><span class="dot"></span>Asetukset</div>
+    <div class="icon-btn" id="nightToggle"><span class="dot"></span><span id="nightLabel">Yötila pois</span></div>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<div class="drawer" id="settingsDrawer">
+  <h3>Karttataso</h3>
+  <label><input type="radio" name="layer" value="osm" checked> OpenStreetMap (ei avainta)</label>
+  <label style="margin-bottom:12px; display:block;"><input type="radio" name="layer" value="traficom"> Traficom rasterikartta</label>
+
+  <h3>Merenkulkusymbolit</h3>
+  <label style="margin-bottom:12px; display:block;"><input type="checkbox" id="seamarkToggle" checked> OpenSeaMap (poijut, loistot, väylät)</label>
+
+  <h3>Traficom API-avain</h3>
+  <input type="text" id="traficomKeyInput" placeholder="Liitä API-avain tähän">
+  <button class="drawer-btn" id="saveKeyBtn">Tallenna avain</button>
+  <div class="note">
+    Rasterikartta vaatii rekisteröitymisen Suomi.fi-valtuuksilla (esim. J Sailing Tmi:n kautta) Traficomin paikkatietopalveluihin. Kun avain ja palvelun tarkka WMTS-osoite ovat tiedossa, ne täydennetään <code>addTraficomLayer()</code>-funktioon koodissa.
+  </div>
+</div>
+
+<div class="status-strip">
+  <span id="ownShipStatus">—</span>
+  <span id="aisStatus">AIS-kohteita: —</span>
+  <span id="timeStatus">—:—:—</span>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+/* ============================================================
+   VERSIONUMERO
+   ============================================================ */
+const APP_VERSION = 'v1.1.0';
+const APP_BUILD = '2026-07-21';
+document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
+
+/* ============================================================
+   OMA VENE — mock-data, korvataan myöhemmin samalla
+   connectToSignalK()-yhteydellä kuin mittaristossa (index.html)
+   ============================================================ */
+const ownShip = {
+  lat: 60.1856,
+  lon: 25.0234,
+  heading: 214,   // astetta, todellinen kurssi
+  sog: 6.1         // kts
+};
+
+/* ============================================================
+   AIS-KOHTEET — mock-alukset. Oikeassa käytössä nämä tulevat
+   SignalK:n vessels-oliosta (paikallinen AIS-vastaanotin) ja/tai
+   Fintrafficin AIS-rajapinnasta LTE-yhteyden kautta kantaman
+   ulkopuolisille aluksille.
+   ============================================================ */
+const aisTargets = [
+  { id: 'AIS-1', name: 'M/S HANKO',    lat: 60.1900, lon: 25.0400, heading: 40,  sog: 9.2 },
+  { id: 'AIS-2', name: 'SV MERITUULI', lat: 60.1790, lon: 25.0100, heading: 300, sog: 4.8 },
+  { id: 'AIS-3', name: 'RIB PILOT-2',  lat: 60.1830, lon: 25.0350, heading: 160, sog: 12.5 }
+];
+
+function wrap360(deg){ return ((deg % 360) + 360) % 360; }
+
+/* --- Kartta --- */
+const map = L.map('map', { zoomControl: true, attributionControl: true })
+  .setView([ownShip.lat, ownShip.lon], 13);
+
+const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '© OpenStreetMap-tekijät (ODbL)'
+});
+osmLayer.addTo(map);
+
+/* OpenSeaMap -- ilmainen, avoin merenkulkusymboliтaso (poijut, loistot,
+   väylät). Läpinäkyvä PNG-taso joka lisätään minkä tahansa pohjakartan
+   päälle, ei vaadi API-avainta. Sama periaate kuin Apple Mapsin
+   "Open Sea Map"-kytkin. */
+const seamarkLayer = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+  maxZoom: 18,
+  attribution: '© <a href="https://www.openseamap.org">OpenSeaMap</a>-tekijät'
+});
+seamarkLayer.addTo(map);
+document.getElementById('seamarkToggle').addEventListener('change', (e) => {
+  if (e.target.checked) seamarkLayer.addTo(map);
+  else map.removeLayer(seamarkLayer);
+});
+
+/* ------------------------------------------------------------
+   Traficomin rasterikartta lisätään tähän kun API-avain ja
+   palvelun tarkka WMTS-osoite/kerrosnimi ovat tiedossa
+   (saadaan Traficomin paikkatietopalveluiden rekisteröinnin
+   yhteydessä). En arvaa näitä parametreja etukäteen, koska
+   väärä kerrosnimi/URL näyttäisi vain tyhjän tai virheellisen
+   kartan navigointikäytössä.
+   ------------------------------------------------------------ */
+function addTraficomLayer(apiKey){
+  console.warn('Traficom-kerrosta ei ole vielä konfiguroitu — täydennä WMTS-osoite ja kerrosnimi tähän funktioon.');
+  // Esimerkkirunko kun tiedot ovat käsillä:
+  // return L.tileLayer('https://<traficom-wmts-osoite>/{z}/{x}/{y}.png?api_key=' + apiKey, {
+  //   maxZoom: 18,
+  //   attribution: '© Traficom'
+  // });
+}
+
+/* --- Karttatason vaihto --- */
+let activeLayer = osmLayer;
+document.querySelectorAll('input[name="layer"]').forEach((radio) => {
+  radio.addEventListener('change', (e) => {
+    map.removeLayer(activeLayer);
+    if (e.target.value === 'osm') {
+      activeLayer = osmLayer;
+    } else {
+      const key = localStorage.getItem('traficomApiKey');
+      const layer = addTraficomLayer(key);
+      activeLayer = layer || osmLayer;
+      if (!layer) e.target.closest('label').previousElementSibling; // no-op fallback
+    }
+    activeLayer.addTo(map);
+    if (document.getElementById('seamarkToggle').checked) seamarkLayer.bringToFront();
+  });
+});
+
+/* --- Oma vene: SVG-nuoli joka kääntyy kurssin mukaan --- */
+function ownShipIcon(headingDeg){
+  const svg = `
+    <svg width="34" height="34" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg">
+      <g transform="rotate(${headingDeg} 17 17)">
+        <path d="M17,3 L25,27 L17,22 L9,27 Z" fill="var(--cyan)" stroke="#050b12" stroke-width="1"/>
+      </g>
+    </svg>`;
+  return L.divIcon({
+    html: svg,
+    className: 'own-ship-icon',
+    iconSize: [34, 34],
+    iconAnchor: [17, 17]
+  });
+}
+const ownShipMarker = L.marker([ownShip.lat, ownShip.lon], {
+  icon: ownShipIcon(ownShip.heading),
+  zIndexOffset: 1000
+}).addTo(map);
+
+/* --- AIS-kohteet: kolmiot + nimitunniste --- */
+function aisIcon(headingDeg, name){
+  const html = `
+    <div class="ais-icon">
+      <div class="tri" style="transform:rotate(${headingDeg}deg)"></div>
+      <div class="ais-label">${name}</div>
+    </div>`;
+  return L.divIcon({ html, className: '', iconSize: [60, 40], iconAnchor: [30, 12] });
+}
+const aisMarkers = {};
+aisTargets.forEach((t) => {
+  aisMarkers[t.id] = L.marker([t.lat, t.lon], { icon: aisIcon(t.heading, t.name) }).addTo(map);
+});
+
+/* --- Mock-liike: sama randomWalk-tyyli kuin mittaristossa --- */
+function randomWalk(value, step, min, max){
+  let v = value + (Math.random() - 0.5) * step;
+  if (v < min) v = min;
+  if (v > max) v = max;
+  return v;
+}
+function metersToDeg(lat){
+  // Karkea muunnos: kuinka monta astetta yksi solmun mittainen minuutti liikkuu sekunnissa
+  return { latStep: 0.00003, lonStep: 0.00006 };
+}
+
+function tick(){
+  // Oma vene
+  ownShip.heading = wrap360(ownShip.heading + (Math.random() - 0.5) * 2);
+  ownShip.sog = randomWalk(ownShip.sog, 0.1, 0, 9);
+  const rad = (ownShip.heading) * Math.PI / 180;
+  ownShip.lat += Math.cos(rad) * 0.00004 * (ownShip.sog / 6);
+  ownShip.lon += Math.sin(rad) * 0.00007 * (ownShip.sog / 6);
+  ownShipMarker.setLatLng([ownShip.lat, ownShip.lon]);
+  ownShipMarker.setIcon(ownShipIcon(ownShip.heading));
+
+  // AIS-kohteet
+  aisTargets.forEach((t) => {
+    t.heading = wrap360(t.heading + (Math.random() - 0.5) * 1.5);
+    const r = t.heading * Math.PI / 180;
+    t.lat += Math.cos(r) * 0.00004 * (t.sog / 6);
+    t.lon += Math.sin(r) * 0.00007 * (t.sog / 6);
+    aisMarkers[t.id].setLatLng([t.lat, t.lon]);
+    aisMarkers[t.id].setIcon(aisIcon(t.heading, t.name));
+  });
+
+  // Tilarivi
+  document.getElementById('ownShipStatus').textContent =
+    `OMA VENE  SOG ${ownShip.sog.toFixed(1)} kt · KURSSI ${Math.round(ownShip.heading)}°`;
+  document.getElementById('aisStatus').textContent = `AIS-kohteita: ${aisTargets.length}`;
+  document.getElementById('timeStatus').textContent = new Date().toTimeString().slice(0,8);
+}
+
+setInterval(tick, 1500);
+tick();
+
+/* --- Yötila --- */
+document.getElementById('nightToggle').addEventListener('click', () => {
+  document.body.classList.toggle('night');
+  const isNight = document.body.classList.contains('night');
+  document.getElementById('nightLabel').textContent = isNight ? 'Yötila päällä' : 'Yötila pois';
+});
+
+/* --- Asetuspaneeli --- */
+const drawer = document.getElementById('settingsDrawer');
+document.getElementById('settingsToggle').addEventListener('click', () => {
+  drawer.classList.toggle('open');
+});
+const keyInput = document.getElementById('traficomKeyInput');
+const savedKey = localStorage.getItem('traficomApiKey');
+if (savedKey) keyInput.value = savedKey;
+document.getElementById('saveKeyBtn').addEventListener('click', () => {
+  localStorage.setItem('traficomApiKey', keyInput.value.trim());
+  keyInput.placeholder = 'Avain tallennettu';
+});
+
+/* --- Service worker (sama cache kuin mittaristossa, eri versio) --- */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch((err) => {
+      console.warn('Service worker ei rekisteröitynyt:', err);
+    });
+  });
+}
+
+/* ============================================================
+   TÄNNE TULEE OIKEA SIGNALK- JA AIS-YHTEYS
+   Sama connectToSignalK(host)-periaate kuin mittaristossa:
+   - navigation.position / .headingTrue / .speedOverGround -> ownShip
+   - SignalK:n vessels-olio (muut kuin "self") -> aisTargets,
+     jotka tulevat paikallisesta AIS-vastaanottimesta NMEA-verkkoon
+   - Lisäksi voidaan hakea Fintrafficin AIS-rajapinnasta (digitraffic.fi)
+     LTE-yhteyden kautta kauempana olevat alukset oman vastaanottimen
+     kantaman ulkopuolelta, jos veneellä on internetyhteys.
+   ============================================================ */
+</script>
+</body>
+</html>
