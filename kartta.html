@@ -191,6 +191,12 @@
   <div class="note">
     Rasterikartta vaatii rekisteröitymisen Suomi.fi-valtuuksilla (esim. J Sailing Tmi:n kautta) Traficomin paikkatietopalveluihin. Kun avain ja palvelun tarkka WMTS-osoite ovat tiedossa, ne täydennetään <code>addTraficomLayer()</code>-funktioon koodissa.
   </div>
+
+  <h3 style="margin-top:16px;">Offline-käyttö</h3>
+  <button class="drawer-btn" id="downloadAreaBtn">Lataa näkyvä alue offline</button>
+  <div class="note" id="downloadProgress">
+    Lataa nykyisen näkymän laatat usealla zoomtasolla, jotta ne toimivat myös ilman nettiä veneen verkossa. Käytä kotiverkossa ennen lähtöä, ei liian suurelle alueelle kerralla (kohtelias käyttö OSM:n palvelinta kohtaan).
+  </div>
 </div>
 
 <div class="status-strip">
@@ -204,7 +210,7 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v1.1.0';
+const APP_VERSION = 'v1.2.0';
 const APP_BUILD = '2026-07-21';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
@@ -387,6 +393,60 @@ document.getElementById('saveKeyBtn').addEventListener('click', () => {
   localStorage.setItem('traficomApiKey', keyInput.value.trim());
   keyInput.placeholder = 'Avain tallennettu';
 });
+
+/* --- Offline-alueen esilataus ---
+   Muuntaa nykyisen näkymän rajat karttalaattojen x/y-koordinaateiksi
+   usealla zoomtasolla ja hakee ne verkosta -- service worker tallentaa
+   jokaisen onnistuneen haun automaattisesti välimuistiin (ks.
+   service-worker.js: fetch-käsittelijä cachettaa KAIKKI onnistuneet
+   haut, ei vain sovelluksen omat tiedostot). Sen jälkeen samat laatat
+   löytyvät myös ilman nettiä, esim. veneen WiFi-1-verkossa. */
+function lonLatToTile(lon, lat, z){
+  const n = Math.pow(2, z);
+  const x = Math.floor((lon + 180) / 360 * n);
+  const latRad = lat * Math.PI / 180;
+  const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+  return { x, y };
+}
+
+async function downloadAreaForOffline(){
+  const btn = document.getElementById('downloadAreaBtn');
+  const progress = document.getElementById('downloadProgress');
+  btn.disabled = true;
+
+  const bounds = map.getBounds();
+  const baseZoom = map.getZoom();
+  const zooms = [baseZoom, baseZoom + 1, baseZoom + 2].filter(z => z <= 18);
+
+  const urls = [];
+  zooms.forEach((z) => {
+    const nw = lonLatToTile(bounds.getWest(), bounds.getNorth(), z);
+    const se = lonLatToTile(bounds.getEast(), bounds.getSouth(), z);
+    for (let x = nw.x; x <= se.x; x++) {
+      for (let y = nw.y; y <= se.y; y++) {
+        urls.push(`https://tile.openstreetmap.org/${z}/${x}/${y}.png`);
+        urls.push(`https://tiles.openseamap.org/seamark/${z}/${x}/${y}.png`);
+      }
+    }
+  });
+
+  let done = 0;
+  for (const url of urls) {
+    try {
+      await fetch(url);
+    } catch (e) {
+      // yksittäisen laatan epäonnistuminen ei pysäytä koko latausta
+    }
+    done++;
+    progress.textContent = `Ladataan... ${done}/${urls.length} laattaa`;
+    await new Promise((r) => setTimeout(r, 40)); // pieni viive, kohtelias palvelimelle
+  }
+
+  progress.textContent = `Valmis — ${urls.length} laattaa tallennettu offline-käyttöön tälle alueelle (zoomit ${zooms.join(', ')}).`;
+  btn.disabled = false;
+}
+
+document.getElementById('downloadAreaBtn').addEventListener('click', downloadAreaForOffline);
 
 /* --- Service worker (sama cache kuin mittaristossa, eri versio) --- */
 if ('serviceWorker' in navigator) {
