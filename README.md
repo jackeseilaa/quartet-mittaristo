@@ -21,3 +21,5 @@ Mittaristo ja Kartta versioidaan erikseen (`vMAJOR.MINOR.PATCH` + build-päivä,
 ## Deploy
 
 GitHub Pages, ei build-vaihetta. Live: https://jackeseilaa.github.io/quartet-mittaristo/
+
+✅ **Deploy/tietoturva tarkistettu 23.7.2026**: live-sivu vastaa repon HEAD:iä, ei viivettä. Ei kovakoodattuja API-avaimia (Traficom-avain on käyttäjän itse syöttämä ja tallentuu vain selaimen localStorageen, ei koskaan lähetetä repoon). Koska sovelluksella ei ole backendia, ei myöskään Firestore-suojausta tarkistettavaksi.
