@@ -394,7 +394,24 @@ const KEEL_DRAFT_DANGER_M = 1.5;
 const NO_GO_ANGLE_TRUE_DEG = 25;
 const NO_GO_ANGLE_APPARENT_DEG = 18;
 
+// TUULIKULMAN KALIBROINTI
+// Jos tuulen suunta näyttää väärältä (esim. lähes vastakkaiselta todelliseen
+// nähden), säädä näitä kahta arvoa — ei tarvitse muokata muuta koodia.
+// WIND_INVERT: käännä true, jos suunta on peilikuva (esim. vasen/oikea vaihtunut)
+// WIND_OFFSET_DEG: lisää/vähennä asteita, jos suunta on johdonmukaisesti X° pielessä
+//                  (esim. jos anturi on asennettu vinoon)
+const WIND_INVERT = false;
+const WIND_OFFSET_DEG = 0;
+
+function applyWindCalibration(deg) {
+  return wrap360((WIND_INVERT ? -deg : deg) + WIND_OFFSET_DEG);
+}
+
 let windMode = 'apparent'; // 'apparent' tai 'true' — kumpi näytetään nuolella ja isolla numerolla
+
+// Näytetty sijainti liukuu kohti oikeaa GPS-arvoa, ettei lukema hyppele jatkuvasti
+let dispLat = null, dispLon = null;
+const POS_SMOOTHING = 0.15; // pienempi = tasaisempi mutta hitaampi seuraamaan
 
 function wrap360(deg){ return ((deg % 360) + 360) % 360; }
 
@@ -445,7 +462,12 @@ function render(){
   document.getElementById('cogValue').textContent = fmtDeg(state.cog);
   document.getElementById('stwValue').textContent = state.stw.toFixed(1);
   document.getElementById('depthValue').textContent = state.depth.toFixed(1);
-  document.getElementById('posValue').textContent = fmtLatLon(state.lat, state.lon);
+  if (dispLat === null) { dispLat = state.lat; dispLon = state.lon; }
+  else {
+    dispLat += (state.lat - dispLat) * POS_SMOOTHING;
+    dispLon += (state.lon - dispLon) * POS_SMOOTHING;
+  }
+  document.getElementById('posValue').textContent = fmtLatLon(dispLat, dispLon);
 
   const now = new Date();
   document.getElementById('timeValue').textContent = now.toTimeString().slice(0,8);
@@ -631,17 +653,18 @@ function connectToSignalK(host) {
 
   ws.onmessage = (msg) => {
     clearTimeout(connectTimeout);
+    lastDataAt = Date.now();
     const delta = JSON.parse(msg.data);
     (delta.updates || []).forEach(u => {
       (u.values || []).forEach(v => {
         switch (v.path) {
           case 'environment.wind.angleApparent':
-            state.awa = wrap360(v.value * 180 / Math.PI); break;
+            state.awa = applyWindCalibration(v.value * 180 / Math.PI); break;
           case 'environment.wind.speedApparent':
             state.aws = v.value; break; // SignalK antaa m/s, näytetään m/s
           case 'environment.wind.angleTrueGround':
           case 'environment.wind.angleTrueWater':
-            state.twa = wrap360(v.value * 180 / Math.PI); break;
+            state.twa = applyWindCalibration(v.value * 180 / Math.PI); break;
           case 'environment.wind.speedTrue':
             state.tws = v.value; break; // m/s
           case 'environment.depth.belowKeel':
@@ -674,6 +697,20 @@ function connectToSignalK(host) {
 }
 
 connectToSignalK('192.168.77.98:3000');
+
+// Kello tikittää aina itsenäisesti, riippumatta siitä tuleeko dataa
+let lastDataAt = Date.now();
+setInterval(() => {
+  const now = new Date();
+  document.getElementById('timeValue').textContent = now.toTimeString().slice(0,8);
+
+  const secsSinceData = Math.round((Date.now() - lastDataAt) / 1000);
+  const badge = document.getElementById('connBadge');
+  if (badge.textContent === 'Yhteydessä' && secsSinceData > 10) {
+    document.getElementById('statusLine').textContent =
+      `Ei uutta dataa ${secsSinceData}s — yhteys auki, mutta SignalK ei lähetä päivityksiä (tarkista veneen NMEA-yhteys)`;
+  }
+}, 1000);
 </script>
 </body>
 </html>
