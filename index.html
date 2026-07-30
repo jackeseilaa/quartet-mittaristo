@@ -353,7 +353,7 @@
         <div class="card-label">Aika</div>
         <div class="pos-value" id="timeValue">—:—:—</div>
       </div>
-      <div class="status-line" id="statusLine">Simuloitu data — ei yhteyttä SignalK-palvelimeen. Katso koodin lopusta connectToSignalK().</div>
+      <div class="status-line" id="statusLine">Yhdistetään SignalK-palvelimeen…</div>
     </div>
   </div>
 
@@ -361,16 +361,16 @@
 
 <script>
 /* ============================================================
-   DEMO-DATA-GENERAATTORI
-   Korvataan myöhemmin oikealla SignalK-yhteydellä, ks. lopussa
-   oleva connectToSignalK()-funktio (ei vielä kutsuttu).
+   tick()/randomWalk() alla ovat demo-datan generaattori — jäävät
+   käyttämättä nyt kun connectToSignalK() (koodin lopussa) syöttää
+   oikeaa dataa Quartetin SignalK-palvelimelta.
    ============================================================ */
 /* ============================================================
    VERSIONUMERO — kasvatetaan jokaisen muutoksen yhteydessä,
    niin näet suoraan käyttöliittymästä onko sinulla uusin versio.
    ============================================================ */
-const APP_VERSION = 'v2.1.0';
-const APP_BUILD = '2026-07-21';
+const APP_VERSION = 'v3.0.0';
+const APP_BUILD = '2026-07-30';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 const state = {
@@ -594,14 +594,11 @@ if ('serviceWorker' in navigator) {
     });
   });
 }
-setInterval(tick, 1200);
-
 /* ============================================================
-   TÄNNE TULEE OIKEA YHTEYS SIGNALK-PALVELIMEEN
-   Kun Raspberry Pi + SignalK on asennettu veneelle, korvaa
-   setInterval(tick, 1200) yllä kutsulla connectToSignalK(...)
-   ja päivitä state-oliota saapuvien deltaviestien mukaan.
-   ============================================================
+   YHTEYS SIGNALK-PALVELIMEEN (Raspberry Pi, Quartet)
+   Korvaa demo-datan setInterval(tick,1200) oikealla SignalK-
+   deltavirralla WebSocketin kautta.
+   ============================================================ */
 
 function connectToSignalK(host) {
   const ws = new WebSocket(`ws://${host}/signalk/v1/stream?subscribe=all`);
@@ -613,11 +610,18 @@ function connectToSignalK(host) {
           case 'environment.wind.angleApparent':
             state.awa = wrap360(v.value * 180 / Math.PI); break;
           case 'environment.wind.speedApparent':
-            state.aws = v.value * 1.94384; break; // m/s -> kt
+            state.aws = v.value; break; // SignalK antaa m/s, näytetään m/s
+          case 'environment.wind.angleTrueGround':
+          case 'environment.wind.angleTrueWater':
+            state.twa = wrap360(v.value * 180 / Math.PI); break;
+          case 'environment.wind.speedTrue':
+            state.tws = v.value; break; // m/s
           case 'environment.depth.belowKeel':
             state.depth = v.value; break;
           case 'navigation.speedOverGround':
-            state.sog = v.value * 1.94384; break;
+            state.sog = v.value * 1.94384; break; // m/s -> kt
+          case 'navigation.speedThroughWater':
+            state.stw = v.value * 1.94384; break; // m/s -> kt
           case 'navigation.courseOverGroundTrue':
             state.cog = v.value * 180 / Math.PI; break;
           case 'navigation.position':
@@ -627,11 +631,19 @@ function connectToSignalK(host) {
     });
     render();
   };
-  ws.onopen = () => document.getElementById('connBadge').textContent = 'Yhteydessä';
-  ws.onclose = () => document.getElementById('connBadge').textContent = 'Yhteys katkesi';
+  ws.onopen = () => {
+    document.getElementById('connBadge').textContent = 'Yhteydessä';
+    document.getElementById('statusLine').textContent = `SignalK: ${host}`;
+  };
+  ws.onclose = () => {
+    document.getElementById('connBadge').textContent = 'Yhteys katkesi';
+    document.getElementById('statusLine').textContent = `SignalK-yhteys katkesi (${host}) — yritetään uudelleen 5s kuluttua`;
+    setTimeout(() => connectToSignalK(host), 5000);
+  };
+  ws.onerror = () => ws.close();
 }
-// connectToSignalK('192.168.1.xxx:3000');
-*/
+
+connectToSignalK('192.168.77.98:3000');
 </script>
 </body>
 </html>
