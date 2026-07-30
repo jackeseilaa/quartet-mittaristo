@@ -601,8 +601,36 @@ if ('serviceWorker' in navigator) {
    ============================================================ */
 
 function connectToSignalK(host) {
-  const ws = new WebSocket(`ws://${host}/signalk/v1/stream?subscribe=all`);
+  document.getElementById('connBadge').textContent = 'Yhdistetään…';
+  document.getElementById('statusLine').textContent = `Yhdistetään SignalK-palvelimeen (${host})…`;
+
+  if (location.protocol === 'https:') {
+    // Selain ei salli suojaamatonta ws://-yhteyttä https-sivulta (mixed content).
+    // Tämä on syy siihen että "Yhdistetään..." jää ikuisesti päälle GitHub Pages -versiossa.
+    document.getElementById('connBadge').textContent = 'Ei voi yhdistää';
+    document.getElementById('statusLine').textContent =
+      'Tämä sivu on ladattu suojatusta https-osoitteesta, eikä selain salli suojaamatonta yhteyttä paikalliseen SignalK-palvelimeen. Avaa sovellus veneellä osoitteesta http://192.168.77.98:8080/ sen sijaan.';
+    return;
+  }
+
+  let ws;
+  let connectTimeout = setTimeout(() => {
+    document.getElementById('connBadge').textContent = 'Ei yhteyttä';
+    document.getElementById('statusLine').textContent = `SignalK ei vastaa osoitteessa ${host} — oletko QUOARTET-verkossa?`;
+    if (ws) ws.close();
+  }, 8000);
+
+  try {
+    ws = new WebSocket(`ws://${host}/signalk/v1/stream?subscribe=all`);
+  } catch (err) {
+    clearTimeout(connectTimeout);
+    document.getElementById('connBadge').textContent = 'Ei voi yhdistää';
+    document.getElementById('statusLine').textContent = `WebSocket-yhteyttä ei voitu avata: ${err.message}`;
+    return;
+  }
+
   ws.onmessage = (msg) => {
+    clearTimeout(connectTimeout);
     const delta = JSON.parse(msg.data);
     (delta.updates || []).forEach(u => {
       (u.values || []).forEach(v => {
@@ -632,10 +660,12 @@ function connectToSignalK(host) {
     render();
   };
   ws.onopen = () => {
+    clearTimeout(connectTimeout);
     document.getElementById('connBadge').textContent = 'Yhteydessä';
     document.getElementById('statusLine').textContent = `SignalK: ${host}`;
   };
   ws.onclose = () => {
+    clearTimeout(connectTimeout);
     document.getElementById('connBadge').textContent = 'Yhteys katkesi';
     document.getElementById('statusLine').textContent = `SignalK-yhteys katkesi (${host}) — yritetään uudelleen 5s kuluttua`;
     setTimeout(() => connectToSignalK(host), 5000);
