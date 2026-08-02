@@ -290,7 +290,7 @@
 <div class="topbar">
   <h1>Quartet <span>· mittaristo</span> <span class="version" id="versionBadge">—</span></h1>
   <div class="topbar-right">
-    <div class="badge" id="connBadge">Demo-data</div>
+    <div class="badge" id="connBadge">—</div>
     <a href="kartta.html" style="display:flex; align-items:center; gap:6px; background:var(--bg-panel-raised); border:1px solid var(--hairline); border-radius:20px; padding:6px 12px; font-family:var(--font-label); font-size:12px; color:var(--text-mid); text-decoration:none;">Kartta</a>
     <div class="night-toggle" id="nightToggle" role="button" aria-label="Yövalotila">
       <span class="dot"></span><span id="nightLabel">Yötila pois</span>
@@ -369,8 +369,8 @@
    VERSIONUMERO — kasvatetaan jokaisen muutoksen yhteydessä,
    niin näet suoraan käyttöliittymästä onko sinulla uusin versio.
    ============================================================ */
-const APP_VERSION = 'v3.0.0';
-const APP_BUILD = '2026-07-30';
+const APP_VERSION = 'v3.0.2';
+const APP_BUILD = '2026-08-02';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 const state = {
@@ -449,12 +449,9 @@ function fmtLatLon(lat, lon){
 }
 
 function render(){
-  const activeAngle = windMode === 'apparent' ? state.awa : state.twa;
-  const activeSpeed = windMode === 'apparent' ? state.aws : state.tws;
-  document.getElementById('windAngleValue').textContent = `${Math.round(activeAngle)}°`;
   document.getElementById('windAngleUnit').textContent = windMode === 'apparent' ? 'AWA' : 'TWA';
   document.getElementById('windSpeedLabel').textContent = windMode === 'apparent' ? 'Tuulen nopeus (näennäinen)' : 'Tuulen nopeus (tosi)';
-  document.getElementById('windSpeedValue').textContent = activeSpeed.toFixed(1);
+  // windAngleValue ja windSpeedValue päivitetään pehmeästi animateNeedle()-silmukassa, ei täällä
   document.getElementById('noGoCaption').textContent = windMode === 'apparent'
     ? `Punainen (STB) / vihreä (BB) = ei etene, < ${NO_GO_ANGLE_APPARENT_DEG}° näennäisestä tuulesta`
     : `Punainen (STB) / vihreä (BB) = ei etene, < ${NO_GO_ANGLE_TRUE_DEG}° todellisesta tuulesta`;
@@ -593,14 +590,42 @@ document.getElementById('nightToggle').addEventListener('click', () => {
   document.getElementById('nightLabel').textContent = isNight ? 'Yötila päällä' : 'Yötila pois';
 });
 
-let displayedNeedleAngle = 0;
 function shortestDelta(from, to){
   return ((to - from + 540) % 360) - 180;
 }
-function animateNeedle(){
-  const target = windMode === 'apparent' ? state.awa : state.twa;
-  displayedNeedleAngle = wrap360(displayedNeedleAngle + shortestDelta(displayedNeedleAngle, target) * 0.12);
+
+// Tuulidata päivittyy SignalKilta harvakseltaan (usein ~5s välein), joten
+// raaka arvo hypähtää lukemasta toiseen. Nämä "displayed"-arvot liukuvat
+// kohti tuoreinta lukemaa ajanmukaisella (frame-rate riippumattomalla)
+// eksponentiaalisella tasoituksella, jolloin neula ja isot numerot
+// liikkuvat tasaisesti koko päivitysten välisen ajan sen sijaan että
+// hyppäisivät ja jäisivät sitten paikoilleen odottamaan seuraavaa dataa.
+// Suurempi TAU = tasaisempi mutta hitaammin perässä pysyvä liike.
+const WIND_ANGLE_SMOOTHING_TAU_MS = 1500;
+const WIND_SPEED_SMOOTHING_TAU_MS = 1500;
+let dispAWA = state.awa, dispTWA = state.twa, dispAWS = state.aws, dispTWS = state.tws;
+let displayedNeedleAngle = state.awa;
+let lastAnimTs = null;
+
+function animateNeedle(ts){
+  if (lastAnimTs === null) lastAnimTs = ts;
+  const dt = Math.max(0, ts - lastAnimTs);
+  lastAnimTs = ts;
+
+  const angleAlpha = 1 - Math.exp(-dt / WIND_ANGLE_SMOOTHING_TAU_MS);
+  const speedAlpha = 1 - Math.exp(-dt / WIND_SPEED_SMOOTHING_TAU_MS);
+
+  dispAWA = wrap360(dispAWA + shortestDelta(dispAWA, state.awa) * angleAlpha);
+  dispTWA = wrap360(dispTWA + shortestDelta(dispTWA, state.twa) * angleAlpha);
+  dispAWS += (state.aws - dispAWS) * speedAlpha;
+  dispTWS += (state.tws - dispTWS) * speedAlpha;
+
+  const target = windMode === 'apparent' ? dispAWA : dispTWA;
+  displayedNeedleAngle = wrap360(displayedNeedleAngle + shortestDelta(displayedNeedleAngle, target) * angleAlpha);
   document.getElementById('windNeedle').setAttribute('transform', `rotate(${displayedNeedleAngle} 150 150)`);
+  document.getElementById('windAngleValue').textContent = `${Math.round(target)}°`;
+  document.getElementById('windSpeedValue').textContent = (windMode === 'apparent' ? dispAWS : dispTWS).toFixed(1);
+
   requestAnimationFrame(animateNeedle);
 }
 
@@ -631,14 +656,14 @@ function connectToSignalK(host) {
     // Tämä on syy siihen että "Yhdistetään..." jää ikuisesti päälle GitHub Pages -versiossa.
     document.getElementById('connBadge').textContent = 'Ei voi yhdistää';
     document.getElementById('statusLine').textContent =
-      'Tämä sivu on ladattu suojatusta https-osoitteesta, eikä selain salli suojaamatonta yhteyttä paikalliseen SignalK-palvelimeen. Avaa sovellus veneellä osoitteesta http://192.168.77.98:8080/ sen sijaan.';
+      'Tämä sivu on ladattu suojatusta https-osoitteesta, eikä selain salli suojaamatonta yhteyttä paikalliseen SignalK-palvelimeen. Avaa sovellus Raspberry Pi:n omasta osoitteesta (esim. http://192.168.77.98:8080/ veneellä, tai Pi:n osoite tässä verkossa) sen sijaan.';
     return;
   }
 
   let ws;
   let connectTimeout = setTimeout(() => {
     document.getElementById('connBadge').textContent = 'Ei yhteyttä';
-    document.getElementById('statusLine').textContent = `SignalK ei vastaa osoitteessa ${host} — oletko QUOARTET-verkossa?`;
+    document.getElementById('statusLine').textContent = `SignalK ei vastaa osoitteessa ${host} — oletko samassa verkossa kuin Raspberry Pi?`;
     if (ws) ws.close();
   }, 8000);
 
@@ -696,7 +721,11 @@ function connectToSignalK(host) {
   ws.onerror = () => ws.close();
 }
 
-connectToSignalK('192.168.77.98:3000');
+// Mittaristo ja SignalK ajavat samalla Raspberry Pi:llä eri porteissa (8080/3000),
+// joten SignalK löytyy aina samasta hostista jolta tämä sivu ladattiin — toimii
+// siis veneen omassa WiFi-verkossa, kotiverkossa ja Tailscalen kautta ilman
+// kovakoodattua IP-osoitetta.
+connectToSignalK(location.hostname + ':3000');
 
 // Kello tikittää aina itsenäisesti, riippumatta siitä tuleeko dataa
 let lastDataAt = Date.now();

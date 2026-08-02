@@ -168,7 +168,7 @@
 <div class="topbar">
   <h1>Quartet <span>· kartta</span> <span class="version" id="versionBadge">—</span></h1>
   <div class="topbar-right">
-    <div class="badge" id="connBadge">Demo-data</div>
+    <div class="badge" id="connBadge">—</div>
     <a class="icon-btn" href="index.html">Mittaristo</a>
     <div class="icon-btn" id="settingsToggle"><span class="dot"></span>Asetukset</div>
     <div class="icon-btn" id="nightToggle"><span class="dot"></span><span id="nightLabel">Yötila pois</span></div>
@@ -210,13 +210,14 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v1.2.0';
-const APP_BUILD = '2026-07-21';
+const APP_VERSION = 'v2.0.0';
+const APP_BUILD = '2026-08-02';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 /* ============================================================
-   OMA VENE — mock-data, korvataan myöhemmin samalla
-   connectToSignalK()-yhteydellä kuin mittaristossa (index.html)
+   OMA VENE — aloitusarvo kartan keskitystä varten ennen kuin
+   ensimmäinen oikea sijainti saadaan SignalKilta (ks.
+   connectToSignalK() koodin lopussa).
    ============================================================ */
 const ownShip = {
   lat: 60.1856,
@@ -224,18 +225,6 @@ const ownShip = {
   heading: 214,   // astetta, todellinen kurssi
   sog: 6.1         // kts
 };
-
-/* ============================================================
-   AIS-KOHTEET — mock-alukset. Oikeassa käytössä nämä tulevat
-   SignalK:n vessels-oliosta (paikallinen AIS-vastaanotin) ja/tai
-   Fintrafficin AIS-rajapinnasta LTE-yhteyden kautta kantaman
-   ulkopuolisille aluksille.
-   ============================================================ */
-const aisTargets = [
-  { id: 'AIS-1', name: 'M/S HANKO',    lat: 60.1900, lon: 25.0400, heading: 40,  sog: 9.2 },
-  { id: 'AIS-2', name: 'SV MERITUULI', lat: 60.1790, lon: 25.0100, heading: 300, sog: 4.8 },
-  { id: 'AIS-3', name: 'RIB PILOT-2',  lat: 60.1830, lon: 25.0350, heading: 160, sog: 12.5 }
-];
 
 function wrap360(deg){ return ((deg % 360) + 360) % 360; }
 
@@ -318,7 +307,11 @@ const ownShipMarker = L.marker([ownShip.lat, ownShip.lon], {
   zIndexOffset: 1000
 }).addTo(map);
 
-/* --- AIS-kohteet: kolmiot + nimitunniste --- */
+/* --- AIS-kohteet: kolmiot + nimitunniste ---
+   Kohteet tulevat SignalK:n vessels-oliosta (paikallinen AIS-vastaanotin
+   tai muu lähde), ei mock-datasta — ks. connectToSignalK() koodin lopussa.
+   Map avaimena SignalK-deltan context (esim.
+   "vessels.urn:mrn:imo:mmsi:230099999"), arvona {lat,lon,heading,sog,name,marker,lastSeen}. */
 function aisIcon(headingDeg, name){
   const html = `
     <div class="ais-icon">
@@ -327,52 +320,29 @@ function aisIcon(headingDeg, name){
     </div>`;
   return L.divIcon({ html, className: '', iconSize: [60, 40], iconAnchor: [30, 12] });
 }
-const aisMarkers = {};
-aisTargets.forEach((t) => {
-  aisMarkers[t.id] = L.marker([t.lat, t.lon], { icon: aisIcon(t.heading, t.name) }).addTo(map);
-});
+const aisVessels = new Map();
+const AIS_STALE_MS = 2 * 60 * 1000; // poistetaan kartalta jos ei päivity 2 min
 
-/* --- Mock-liike: sama randomWalk-tyyli kuin mittaristossa --- */
-function randomWalk(value, step, min, max){
-  let v = value + (Math.random() - 0.5) * step;
-  if (v < min) v = min;
-  if (v > max) v = max;
-  return v;
-}
-function metersToDeg(lat){
-  // Karkea muunnos: kuinka monta astetta yksi solmun mittainen minuutti liikkuu sekunnissa
-  return { latStep: 0.00003, lonStep: 0.00006 };
+function mmsiFromContext(context){
+  const m = /mmsi:(\d+)/.exec(context || '');
+  return m ? m[1] : context;
 }
 
-function tick(){
-  // Oma vene
-  ownShip.heading = wrap360(ownShip.heading + (Math.random() - 0.5) * 2);
-  ownShip.sog = randomWalk(ownShip.sog, 0.1, 0, 9);
-  const rad = (ownShip.heading) * Math.PI / 180;
-  ownShip.lat += Math.cos(rad) * 0.00004 * (ownShip.sog / 6);
-  ownShip.lon += Math.sin(rad) * 0.00007 * (ownShip.sog / 6);
-  ownShipMarker.setLatLng([ownShip.lat, ownShip.lon]);
-  ownShipMarker.setIcon(ownShipIcon(ownShip.heading));
+function updateAisStatus(){
+  document.getElementById('aisStatus').textContent = `AIS-kohteita: ${aisVessels.size}`;
+}
 
-  // AIS-kohteet
-  aisTargets.forEach((t) => {
-    t.heading = wrap360(t.heading + (Math.random() - 0.5) * 1.5);
-    const r = t.heading * Math.PI / 180;
-    t.lat += Math.cos(r) * 0.00004 * (t.sog / 6);
-    t.lon += Math.sin(r) * 0.00007 * (t.sog / 6);
-    aisMarkers[t.id].setLatLng([t.lat, t.lon]);
-    aisMarkers[t.id].setIcon(aisIcon(t.heading, t.name));
+function pruneStaleAis(){
+  const now = Date.now();
+  aisVessels.forEach((v, ctx) => {
+    if (now - v.lastSeen > AIS_STALE_MS) {
+      map.removeLayer(v.marker);
+      aisVessels.delete(ctx);
+    }
   });
-
-  // Tilarivi
-  document.getElementById('ownShipStatus').textContent =
-    `OMA VENE  SOG ${ownShip.sog.toFixed(1)} kt · KURSSI ${Math.round(ownShip.heading)}°`;
-  document.getElementById('aisStatus').textContent = `AIS-kohteita: ${aisTargets.length}`;
-  document.getElementById('timeStatus').textContent = new Date().toTimeString().slice(0,8);
+  updateAisStatus();
 }
-
-setInterval(tick, 1500);
-tick();
+setInterval(pruneStaleAis, 30000);
 
 /* --- Yötila --- */
 document.getElementById('nightToggle').addEventListener('click', () => {
@@ -458,15 +428,129 @@ if ('serviceWorker' in navigator) {
 }
 
 /* ============================================================
-   TÄNNE TULEE OIKEA SIGNALK- JA AIS-YHTEYS
-   Sama connectToSignalK(host)-periaate kuin mittaristossa:
-   - navigation.position / .headingTrue / .speedOverGround -> ownShip
-   - SignalK:n vessels-olio (muut kuin "self") -> aisTargets,
-     jotka tulevat paikallisesta AIS-vastaanottimesta NMEA-verkkoon
-   - Lisäksi voidaan hakea Fintrafficin AIS-rajapinnasta (digitraffic.fi)
-     LTE-yhteyden kautta kauempana olevat alukset oman vastaanottimen
-     kantaman ulkopuolelta, jos veneellä on internetyhteys.
+   YHTEYS SIGNALK-PALVELIMEEN (Raspberry Pi, Quartet)
+   Sama periaate ja samat SignalK-polut kuin mittaristossa (index.html):
+   - context "vessels.self"  -> oma vene
+   - context "vessels.urn:..." (mikä tahansa muu) -> AIS-kohde,
+     joka tulee paikallisesta AIS-vastaanottimesta NMEA-verkkoon
+   Fintrafficin digitraffic.fi-rajapinta (kantaman ulkopuoliset alukset
+   LTE:n kautta) on yhä READMEssä mainittu jatkokehitysidea — ei liitetty
+   tähän, koska sen pitäisi täydentää eikä korvata paikallista AIS-listaa
+   (MMSI-perusteinen yhdistäminen), ja sitä ei ole voitu testata oikeaa
+   AIS-vastaanotinta vasten.
    ============================================================ */
+
+function connectToSignalK(host) {
+  document.getElementById('connBadge').textContent = 'Yhdistetään…';
+
+  if (location.protocol === 'https:') {
+    // Selain ei salli suojaamatonta ws://-yhteyttä https-sivulta (mixed content),
+    // sama rajoitus kuin mittaristossa (index.html).
+    document.getElementById('connBadge').textContent = 'Ei voi yhdistää';
+    document.getElementById('ownShipStatus').textContent =
+      'Https-sivulta ei voi yhdistää paikalliseen SignalKiin — avaa Raspberry Pi:n omasta osoitteesta (esim. http://192.168.77.98:8080/kartta.html veneellä).';
+    return;
+  }
+
+  let ws;
+  let connectTimeout = setTimeout(() => {
+    document.getElementById('connBadge').textContent = 'Ei yhteyttä';
+    document.getElementById('ownShipStatus').textContent = `SignalK ei vastaa osoitteessa ${host}`;
+    if (ws) ws.close();
+  }, 8000);
+
+  try {
+    ws = new WebSocket(`ws://${host}/signalk/v1/stream?subscribe=all`);
+  } catch (err) {
+    clearTimeout(connectTimeout);
+    document.getElementById('connBadge').textContent = 'Ei voi yhdistää';
+    document.getElementById('ownShipStatus').textContent = `WebSocket-yhteyttä ei voitu avata: ${err.message}`;
+    return;
+  }
+
+  ws.onopen = () => {
+    clearTimeout(connectTimeout);
+    document.getElementById('connBadge').textContent = 'Yhteydessä';
+  };
+
+  ws.onmessage = (msg) => {
+    clearTimeout(connectTimeout);
+    lastDataAt = Date.now();
+    const delta = JSON.parse(msg.data);
+    const context = delta.context;
+    (delta.updates || []).forEach(u => {
+      (u.values || []).forEach(v => {
+        if (context === 'vessels.self') {
+          switch (v.path) {
+            case 'navigation.position':
+              ownShip.lat = v.value.latitude; ownShip.lon = v.value.longitude; break;
+            case 'navigation.headingTrue':
+            case 'navigation.courseOverGroundTrue':
+              ownShip.heading = wrap360(v.value * 180 / Math.PI); break;
+            case 'navigation.speedOverGround':
+              ownShip.sog = v.value * 1.94384; break; // m/s -> kt
+          }
+          ownShipMarker.setLatLng([ownShip.lat, ownShip.lon]);
+          ownShipMarker.setIcon(ownShipIcon(ownShip.heading));
+          document.getElementById('ownShipStatus').textContent =
+            `OMA VENE  SOG ${ownShip.sog.toFixed(1)} kt · KURSSI ${Math.round(ownShip.heading)}°`;
+        } else if (context && context.startsWith('vessels.')) {
+          let entry = aisVessels.get(context);
+          if (!entry) {
+            entry = { lat: null, lon: null, heading: 0, sog: 0, name: mmsiFromContext(context), marker: null, lastSeen: Date.now() };
+            aisVessels.set(context, entry);
+          }
+          entry.lastSeen = Date.now();
+          switch (v.path) {
+            case 'name':
+              entry.name = v.value; break;
+            case 'navigation.position':
+              entry.lat = v.value.latitude; entry.lon = v.value.longitude; break;
+            case 'navigation.headingTrue':
+            case 'navigation.courseOverGroundTrue':
+              entry.heading = wrap360(v.value * 180 / Math.PI); break;
+            case 'navigation.speedOverGround':
+              entry.sog = v.value * 1.94384; break; // m/s -> kt
+          }
+          if (entry.lat !== null && entry.lon !== null) {
+            if (!entry.marker) {
+              entry.marker = L.marker([entry.lat, entry.lon], { icon: aisIcon(entry.heading, entry.name) }).addTo(map);
+            } else {
+              entry.marker.setLatLng([entry.lat, entry.lon]);
+              entry.marker.setIcon(aisIcon(entry.heading, entry.name));
+            }
+          }
+          updateAisStatus();
+        }
+      });
+    });
+  };
+
+  ws.onclose = () => {
+    clearTimeout(connectTimeout);
+    document.getElementById('connBadge').textContent = 'Yhteys katkesi';
+    document.getElementById('ownShipStatus').textContent = `SignalK-yhteys katkesi (${host}) — yritetään uudelleen 5s kuluttua`;
+    setTimeout(() => connectToSignalK(host), 5000);
+  };
+  ws.onerror = () => ws.close();
+}
+
+// Mittaristo ja SignalK ajavat samalla Raspberry Pi:llä eri porteissa (8080/3000),
+// joten SignalK löytyy aina samasta hostista jolta tämä sivu ladattiin.
+connectToSignalK(location.hostname + ':3000');
+
+// Kello ja "ei dataa" -tarkistus tikittävät aina itsenäisesti, riippumatta siitä
+// tuleeko dataa (sama periaate kuin mittaristossa, index.html).
+let lastDataAt = Date.now();
+setInterval(() => {
+  document.getElementById('timeStatus').textContent = new Date().toTimeString().slice(0,8);
+  const secsSinceData = Math.round((Date.now() - lastDataAt) / 1000);
+  const badge = document.getElementById('connBadge');
+  if (badge.textContent === 'Yhteydessä' && secsSinceData > 10) {
+    document.getElementById('ownShipStatus').textContent =
+      `Ei uutta dataa ${secsSinceData}s — yhteys auki, mutta SignalK ei lähetä päivityksiä`;
+  }
+}, 1000);
 </script>
 </body>
 </html>
