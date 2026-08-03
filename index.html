@@ -292,13 +292,16 @@
   <div class="topbar-right">
     <div class="badge" id="connBadge">—</div>
     <a href="kartta.html" style="display:flex; align-items:center; gap:6px; background:var(--bg-panel-raised); border:1px solid var(--hairline); border-radius:20px; padding:6px 12px; font-family:var(--font-label); font-size:12px; color:var(--text-mid); text-decoration:none;">Kartta</a>
+    <div class="night-toggle" id="allDataToggle" role="button" aria-label="Kaikki data">
+      <span class="dot"></span><span>Kaikki data</span>
+    </div>
     <div class="night-toggle" id="nightToggle" role="button" aria-label="Yövalotila">
       <span class="dot"></span><span id="nightLabel">Yötila pois</span>
     </div>
   </div>
 </div>
 
-<div class="grid">
+<div class="grid" id="mainGrid">
 
   <div class="card wind-card">
     <div class="compass-wrap">
@@ -359,6 +362,25 @@
 
 </div>
 
+<div class="grid" id="allDataGrid" style="display:none;">
+  <div class="card pos-card">
+    <div class="card-label">Kaikki SignalK-data (oma vene) — myös veden lämpö, virtaus, loki jne.</div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-family:var(--font-display); font-size:13px; margin-top:8px;">
+        <thead>
+          <tr style="text-align:left; color:var(--text-mid); border-bottom:1px solid var(--hairline);">
+            <th style="padding:6px 8px;">Polku</th>
+            <th style="padding:6px 8px;">Arvo</th>
+            <th style="padding:6px 8px;">Lähde</th>
+            <th style="padding:6px 8px;">Päivitetty</th>
+          </tr>
+        </thead>
+        <tbody id="allDataBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ============================================================
    tick()/randomWalk() alla ovat demo-datan generaattori — jäävät
@@ -369,8 +391,8 @@
    VERSIONUMERO — kasvatetaan jokaisen muutoksen yhteydessä,
    niin näet suoraan käyttöliittymästä onko sinulla uusin versio.
    ============================================================ */
-const APP_VERSION = 'v3.0.2';
-const APP_BUILD = '2026-08-02';
+const APP_VERSION = 'v3.1.1';
+const APP_BUILD = '2026-08-03';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 const state = {
@@ -438,14 +460,23 @@ function tick(){
 
 function fmtDeg(d){ return Math.round(d).toString().padStart(3,'0') + '°'; }
 
+// WGS84, asteet/minuutit/sekunnit (DD° MM' SS.S"), esim. 60°11'50.8"N
+function toDMS(deg){
+  const abs = Math.abs(deg);
+  const d = Math.floor(abs);
+  const minFloat = (abs - d) * 60;
+  const m = Math.floor(minFloat);
+  const s = ((minFloat - m) * 60).toFixed(1);
+  return { d, m, s: s.padStart(4, '0') };
+}
+
 function fmtLatLon(lat, lon){
-  const latDeg = Math.floor(Math.abs(lat));
-  const latMin = ((Math.abs(lat) - latDeg) * 60).toFixed(3);
-  const lonDeg = Math.floor(Math.abs(lon));
-  const lonMin = ((Math.abs(lon) - lonDeg) * 60).toFixed(3);
+  const la = toDMS(lat);
+  const lo = toDMS(lon);
   const ns = lat >= 0 ? 'N' : 'S';
   const ew = lon >= 0 ? 'E' : 'W';
-  return `${latDeg}°${latMin}'${ns}  ${lonDeg}°${lonMin}'${ew}`;
+  return `${String(la.d).padStart(2,'0')}°${String(la.m).padStart(2,'0')}'${la.s}"${ns}  `
+       + `${String(lo.d).padStart(3,'0')}°${String(lo.m).padStart(2,'0')}'${lo.s}"${ew}`;
 }
 
 function render(){
@@ -590,6 +621,113 @@ document.getElementById('nightToggle').addEventListener('click', () => {
   document.getElementById('nightLabel').textContent = isNight ? 'Yötila päällä' : 'Yötila pois';
 });
 
+/* ============================================================
+   KAIKKI DATA -näkymä — lista jokaisesta omalta veneeltä tulevasta
+   SignalK-polusta (myös ne joita kuratoitu mittaristo ei näytä,
+   esim. veden lämpötila, virtaus, loki). Täyttyy connectToSignalK():n
+   WebSocket-käsittelijässä (ks. allData.set(...) alempana).
+   ============================================================ */
+const allData = new Map(); // path -> { value, source, ts }
+const mainGrid = document.getElementById('mainGrid');
+const allDataGrid = document.getElementById('allDataGrid');
+
+// Selkosuomenkieliset nimet tunnetuille SignalK-poluille. Tuntemattomat
+// polut (esim. jos joskus lisätään uusi anturi) näytetään sellaisenaan
+// raakana polkuna, jotta "Kaikki data" tosiaan näyttää kaiken.
+const PATH_LABELS_FI = {
+  'navigation.position': 'Sijainti',
+  'navigation.log': 'Loki (kokonaismatka)',
+  'navigation.courseOverGroundMagnetic': 'Kurssi yli pohjan (magneettinen)',
+  'navigation.courseOverGroundTrue': 'Kurssi yli pohjan (tosi)',
+  'navigation.speedOverGround': 'Nopeus yli pohjan (SOG)',
+  'navigation.speedThroughWater': 'Nopeus veden suhteen (STW)',
+  'navigation.courseRhumbline.crossTrackError': 'Poikkeama reitiltä (XTE)',
+  'navigation.headingTrue': 'Kompassisuunta (tosi)',
+  'navigation.headingMagnetic': 'Kompassisuunta (magneettinen)',
+  'navigation.magneticVariation': 'Magneettinen eranto',
+  'environment.wind.speedTrue': 'Tuulen nopeus (tosi)',
+  'environment.wind.speedApparent': 'Tuulen nopeus (näennäinen)',
+  'environment.wind.angleTrueWater': 'Tuulen kulma (tosi, veden suhteen)',
+  'environment.wind.angleTrueGround': 'Tuulen kulma (tosi, pohjan suhteen)',
+  'environment.wind.angleApparent': 'Tuulen kulma (näennäinen)',
+  'environment.water.temperature': 'Veden lämpötila',
+  'environment.depth.belowTransducer': 'Syvyys anturin alla',
+  'environment.depth.belowSurface': 'Syvyys pinnasta',
+  'environment.depth.belowKeel': 'Syvyys kölin alla',
+  'environment.depth.surfaceToTransducer': 'Anturin etäisyys pinnasta',
+  'environment.current.setTrue': 'Virtauksen suunta (tosi)',
+  'environment.current.setMagnetic': 'Virtauksen suunta (magneettinen)',
+  'environment.current.drift': 'Virtauksen nopeus',
+  'performance.velocityMadeGood': 'Tuulenmukainen nopeus (VMG)'
+};
+
+function humanizePath(path){
+  return PATH_LABELS_FI[path] || path;
+}
+
+// Merimaili metreinä, matkojen (loki, XTE ym.) muuntoa varten
+const METERS_PER_NM = 1852;
+
+function humanizeValue(path, value){
+  if (value === null || value === undefined) return '—';
+  if (path === 'navigation.position' && value && typeof value.latitude === 'number') {
+    return fmtLatLon(value.latitude, value.longitude);
+  }
+  if (typeof value !== 'number') {
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  }
+  // Tuulen nopeus näytetään aina m/s:ssä (SignalK:n omassa yksikössä),
+  // muut nopeudet (SOG, STW, VMG, virtaus) solmuina alempana.
+  if (path.startsWith('environment.wind.speed')) {
+    return value.toFixed(1) + ' m/s';
+  }
+  if (/angle|heading|course|direction|attitude/i.test(path)) {
+    return (value * 180 / Math.PI).toFixed(1) + '°';
+  }
+  if (/temperature/i.test(path)) {
+    return (value - 273.15).toFixed(1) + ' °C'; // SignalK: Kelvin
+  }
+  // Syvyys pysyy metreinä — ei matka vaan syvyys
+  if (path.startsWith('environment.depth.')) {
+    return value.toFixed(2) + ' m';
+  }
+  // Matkat (loki, poikkeama reitiltä ym.) merimailina
+  if (/\blog\b|distance|range|crossTrackError/i.test(path)) {
+    return (value / METERS_PER_NM).toFixed(2) + ' nm';
+  }
+  if (/speed/i.test(path)) {
+    return (value * 1.94384).toFixed(2) + ' kt'; // SignalK: m/s
+  }
+  return Number.isInteger(value) ? String(value) : value.toFixed(3);
+}
+
+function renderAllData(){
+  const body = document.getElementById('allDataBody');
+  const rows = [...allData.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  body.innerHTML = rows.map(([path, info]) => {
+    const ageSec = Math.round((Date.now() - info.ts) / 1000);
+    return `<tr style="border-bottom:1px solid var(--hairline);">
+      <td style="padding:6px 8px; color:var(--text-mid);" title="${path}">${humanizePath(path)}</td>
+      <td style="padding:6px 8px; color:var(--text-hi); font-variant-numeric:tabular-nums;">${humanizeValue(path, info.value)}</td>
+      <td style="padding:6px 8px; color:var(--text-low);">${info.source || '—'}</td>
+      <td style="padding:6px 8px; color:var(--text-low);">${ageSec}s</td>
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('allDataToggle').addEventListener('click', (e) => {
+  const showing = allDataGrid.style.display !== 'none';
+  allDataGrid.style.display = showing ? 'none' : '';
+  mainGrid.style.display = showing ? '' : 'none';
+  e.currentTarget.classList.toggle('active', !showing);
+  if (!showing) renderAllData();
+});
+
+setInterval(() => {
+  if (allDataGrid.style.display !== 'none') renderAllData();
+}, 1000);
+
 function shortestDelta(from, to){
   return ((to - from + 540) % 360) - 180;
 }
@@ -647,6 +785,8 @@ if ('serviceWorker' in navigator) {
    deltavirralla WebSocketin kautta.
    ============================================================ */
 
+let selfContext = null;
+
 function connectToSignalK(host) {
   document.getElementById('connBadge').textContent = 'Yhdistetään…';
   document.getElementById('statusLine').textContent = `Yhdistetään SignalK-palvelimeen (${host})…`;
@@ -680,8 +820,17 @@ function connectToSignalK(host) {
     clearTimeout(connectTimeout);
     lastDataAt = Date.now();
     const delta = JSON.parse(msg.data);
+    if (typeof delta.self !== 'undefined') {
+      selfContext = delta.self;
+    }
+    // SignalK ei koskaan lähetä kirjaimellista kontekstia "vessels.self" —
+    // oikea konteksti (esim. "vessels.urn:mrn:imo:mmsi:230942870") kerrotaan
+    // vain striimin ensimmäisessä "hello"-viestissä `self`-kenttänä.
+    const isSelf = delta.context === selfContext || delta.context === 'vessels.self';
     (delta.updates || []).forEach(u => {
       (u.values || []).forEach(v => {
+        if (!isSelf) return;
+        allData.set(v.path, { value: v.value, source: u['$source'] || '—', ts: Date.now() });
         switch (v.path) {
           case 'environment.wind.angleApparent':
             state.awa = applyWindCalibration(v.value * 180 / Math.PI); break;

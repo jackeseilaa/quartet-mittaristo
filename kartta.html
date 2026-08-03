@@ -170,6 +170,7 @@
   <div class="topbar-right">
     <div class="badge" id="connBadge">—</div>
     <a class="icon-btn" href="index.html">Mittaristo</a>
+    <div class="icon-btn" id="centerToggle"><span class="dot"></span>Keskitä</div>
     <div class="icon-btn" id="settingsToggle"><span class="dot"></span>Asetukset</div>
     <div class="icon-btn" id="nightToggle"><span class="dot"></span><span id="nightLabel">Yötila pois</span></div>
   </div>
@@ -211,8 +212,8 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.0.0';
-const APP_BUILD = '2026-08-02';
+const APP_VERSION = 'v2.2.0';
+const APP_BUILD = '2026-08-03';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 /* ============================================================
@@ -220,37 +221,31 @@ document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_B
    ensimmäinen oikea sijainti saadaan SignalKilta (ks.
    connectToSignalK() koodin lopussa).
    ============================================================ */
+// lat/lon pysyvät null:ina kunnes ensimmäinen oikea GLL-sijainti saadaan
+// SignalKilta (ks. connectToSignalK() koodin lopussa) — ei koskaan näytetä
+// keksittyä/vanhentunutta sijaintia oman veneen merkkinä.
 const ownShip = {
-  lat: 60.1856,
-  lon: 25.0234,
-  heading: 214,   // astetta, todellinen kurssi
-  sog: 6.1         // kts
+  lat: null,
+  lon: null,
+  heading: 0,        // paras arvio keulan suunnasta: oikea kompassisuunta (HDT) jos saatavilla, muuten COG
+  hasHeading: false,  // true heti kun navigation.headingTrue on saatu edes kerran
+  cog: 0,             // kurssi yli pohjan, aina VTG:stä — näytetään aina erikseen
+  sog: 0
 };
+
+// Vain kartan alkunäkymän keskitystä varten ennen ensimmäistä oikeaa sijaintia
+// — EI oman veneen sijainti, ei koskaan käytetä ownShipMarkerin paikkana.
+const INITIAL_VIEW = { lat: 60.1856, lon: 25.0234 };
 
 function wrap360(deg){ return ((deg % 360) + 360) % 360; }
 
 /* --- Kartta --- */
 const map = L.map('map', { zoomControl: true, attributionControl: true })
-  .setView([ownShip.lat, ownShip.lon], 13);
+  .setView([INITIAL_VIEW.lat, INITIAL_VIEW.lon], 13);
 
 const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
   attribution: '© OpenStreetMap-tekijät (ODbL)'
-});
-osmLayer.addTo(map);
-
-/* OpenSeaMap -- ilmainen, avoin merenkulkusymboliтaso (poijut, loistot,
-   väylät). Läpinäkyvä PNG-taso joka lisätään minkä tahansa pohjakartan
-   päälle, ei vaadi API-avainta. Sama periaate kuin Apple Mapsin
-   "Open Sea Map"-kytkin. */
-const seamarkLayer = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
-  maxZoom: 18,
-  attribution: '© <a href="https://www.openseamap.org">OpenSeaMap</a>-tekijät'
-});
-seamarkLayer.addTo(map);
-document.getElementById('seamarkToggle').addEventListener('change', (e) => {
-  if (e.target.checked) seamarkLayer.addTo(map);
-  else map.removeLayer(seamarkLayer);
 });
 
 /* Väyläviraston rannikkokartat (rannikkokartat.mbtiles), ladattu paikallisesti
@@ -284,8 +279,33 @@ function addTraficomLayer(apiKey){
   // });
 }
 
-/* --- Karttatason vaihto --- */
-let activeLayer = osmLayer;
+/* --- Karttatason vaihto ---
+   Valittu taso muistetaan localStoragessa, jotta se säilyy vaikka siirryttäisiin
+   mittaristo-sivulle ja takaisin (jokainen sivu ladataan aina kokonaan uudestaan).
+   Oletus on rannikkokartat, ei OpenStreetMap. */
+const LAYER_STORAGE_KEY = 'quartetMapLayer';
+const layersByKey = { osm: osmLayer, rannikkokartat: rannikkokartatLayer };
+let activeLayerKey = localStorage.getItem(LAYER_STORAGE_KEY) || 'rannikkokartat';
+if (!layersByKey[activeLayerKey]) activeLayerKey = 'rannikkokartat'; // esim. tallennettu 'traficom', joka ei viela toimi valittavana pohjana
+let activeLayer = layersByKey[activeLayerKey];
+activeLayer.addTo(map);
+const initialRadio = document.querySelector(`input[name="layer"][value="${activeLayerKey}"]`);
+if (initialRadio) initialRadio.checked = true;
+
+/* OpenSeaMap -- ilmainen, avoin merenkulkusymboliтaso (poijut, loistot,
+   väylät). Läpinäkyvä PNG-taso joka lisätään minkä tahansa pohjakartan
+   päälle, ei vaadi API-avainta. Sama periaate kuin Apple Mapsin
+   "Open Sea Map"-kytkin. */
+const seamarkLayer = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+  maxZoom: 18,
+  attribution: '© <a href="https://www.openseamap.org">OpenSeaMap</a>-tekijät'
+});
+seamarkLayer.addTo(map);
+document.getElementById('seamarkToggle').addEventListener('change', (e) => {
+  if (e.target.checked) seamarkLayer.addTo(map);
+  else map.removeLayer(seamarkLayer);
+});
+
 document.querySelectorAll('input[name="layer"]').forEach((radio) => {
   radio.addEventListener('change', (e) => {
     map.removeLayer(activeLayer);
@@ -297,9 +317,9 @@ document.querySelectorAll('input[name="layer"]').forEach((radio) => {
       const key = localStorage.getItem('traficomApiKey');
       const layer = addTraficomLayer(key);
       activeLayer = layer || osmLayer;
-      if (!layer) e.target.closest('label').previousElementSibling; // no-op fallback
     }
     activeLayer.addTo(map);
+    localStorage.setItem(LAYER_STORAGE_KEY, e.target.value);
     if (document.getElementById('seamarkToggle').checked) seamarkLayer.bringToFront();
   });
 });
@@ -319,10 +339,9 @@ function ownShipIcon(headingDeg){
     iconAnchor: [17, 17]
   });
 }
-const ownShipMarker = L.marker([ownShip.lat, ownShip.lon], {
-  icon: ownShipIcon(ownShip.heading),
-  zIndexOffset: 1000
-}).addTo(map);
+// Luodaan vasta kun ensimmäinen oikea sijainti saadaan — sama periaate kuin
+// AIS-kohteilla (entry.marker) — ei koskaan piirretä väärää alkupaikkaa.
+let ownShipMarker = null;
 
 /* --- AIS-kohteet: kolmiot + nimitunniste ---
    Kohteet tulevat SignalK:n vessels-oliosta (paikallinen AIS-vastaanotin
@@ -366,6 +385,13 @@ document.getElementById('nightToggle').addEventListener('click', () => {
   document.body.classList.toggle('night');
   const isNight = document.body.classList.contains('night');
   document.getElementById('nightLabel').textContent = isNight ? 'Yötila päällä' : 'Yötila pois';
+});
+
+/* --- Keskitä kartta oman veneen sijaintiin --- */
+document.getElementById('centerToggle').addEventListener('click', () => {
+  if (ownShip.lat !== null && ownShip.lon !== null) {
+    map.setView([ownShip.lat, ownShip.lon], map.getZoom());
+  }
 });
 
 /* --- Asetuspaneeli --- */
@@ -447,15 +473,22 @@ if ('serviceWorker' in navigator) {
 /* ============================================================
    YHTEYS SIGNALK-PALVELIMEEN (Raspberry Pi, Quartet)
    Sama periaate ja samat SignalK-polut kuin mittaristossa (index.html):
-   - context "vessels.self"  -> oma vene
+   - context, joka täsmää selfContextiin (ks. alla) -> oma vene
    - context "vessels.urn:..." (mikä tahansa muu) -> AIS-kohde,
      joka tulee paikallisesta AIS-vastaanottimesta NMEA-verkkoon
+   SignalK ei koskaan lähetä kirjaimellista kontekstia "vessels.self" —
+   oikea konteksti on esim. "vessels.urn:mrn:imo:mmsi:230942870", ja
+   palvelin kertoo sen ainoastaan striimin ensimmäisessä ("hello")
+   viestissä `self`-kenttänä. Se pitää siis lukea talteen dynaamisesti,
+   ei kovakoodata.
    Fintrafficin digitraffic.fi-rajapinta (kantaman ulkopuoliset alukset
    LTE:n kautta) on yhä READMEssä mainittu jatkokehitysidea — ei liitetty
    tähän, koska sen pitäisi täydentää eikä korvata paikallista AIS-listaa
    (MMSI-perusteinen yhdistäminen), ja sitä ei ole voitu testata oikeaa
    AIS-vastaanotinta vasten.
    ============================================================ */
+
+let selfContext = null;
 
 function connectToSignalK(host) {
   document.getElementById('connBadge').textContent = 'Yhdistetään…';
@@ -494,23 +527,44 @@ function connectToSignalK(host) {
     clearTimeout(connectTimeout);
     lastDataAt = Date.now();
     const delta = JSON.parse(msg.data);
+    if (typeof delta.self !== 'undefined') {
+      selfContext = delta.self;
+    }
     const context = delta.context;
     (delta.updates || []).forEach(u => {
       (u.values || []).forEach(v => {
-        if (context === 'vessels.self') {
+        if (context === selfContext || context === 'vessels.self') {
           switch (v.path) {
             case 'navigation.position':
               ownShip.lat = v.value.latitude; ownShip.lon = v.value.longitude; break;
             case 'navigation.headingTrue':
+              // Oikea kompassisuunta — käytetään keulan suuntana kun saatavilla.
+              ownShip.heading = wrap360(v.value * 180 / Math.PI);
+              ownShip.hasHeading = true;
+              break;
             case 'navigation.courseOverGroundTrue':
-              ownShip.heading = wrap360(v.value * 180 / Math.PI); break;
+              ownShip.cog = wrap360(v.value * 180 / Math.PI);
+              // Ei kompassia (esim. Quartetin NX2 ei tällä hetkellä lähetä HDT/HDM-lauseita) ->
+              // käytetään kurssia yli pohjan parhaana arviona keulan suunnasta.
+              if (!ownShip.hasHeading) ownShip.heading = ownShip.cog;
+              break;
             case 'navigation.speedOverGround':
               ownShip.sog = v.value * 1.94384; break; // m/s -> kt
           }
-          ownShipMarker.setLatLng([ownShip.lat, ownShip.lon]);
-          ownShipMarker.setIcon(ownShipIcon(ownShip.heading));
-          document.getElementById('ownShipStatus').textContent =
-            `OMA VENE  SOG ${ownShip.sog.toFixed(1)} kt · KURSSI ${Math.round(ownShip.heading)}°`;
+          if (ownShip.lat !== null && ownShip.lon !== null) {
+            if (!ownShipMarker) {
+              ownShipMarker = L.marker([ownShip.lat, ownShip.lon], {
+                icon: ownShipIcon(ownShip.heading),
+                zIndexOffset: 1000
+              }).addTo(map);
+            } else {
+              ownShipMarker.setLatLng([ownShip.lat, ownShip.lon]);
+              ownShipMarker.setIcon(ownShipIcon(ownShip.heading));
+            }
+            document.getElementById('ownShipStatus').textContent =
+              `OMA VENE  SOG ${ownShip.sog.toFixed(1)} kt · COG ${Math.round(ownShip.cog)}°`
+              + (ownShip.hasHeading ? ` · HDG ${Math.round(ownShip.heading)}°` : '');
+          }
         } else if (context && context.startsWith('vessels.')) {
           let entry = aisVessels.get(context);
           if (!entry) {
