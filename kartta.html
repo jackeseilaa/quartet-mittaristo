@@ -180,7 +180,8 @@
 <div class="drawer" id="settingsDrawer">
   <h3>Karttataso</h3>
   <label><input type="radio" name="layer" value="osm" checked> OpenStreetMap (ei avainta)</label>
-  <label style="margin-bottom:12px; display:block;"><input type="radio" name="layer" value="traficom"> Traficom rasterikartta</label>
+  <label style="margin-bottom:12px; display:block;"><input type="radio" name="layer" value="rannikkokartat"> Rannikkokartat (SignalK, offline)</label>
+  <label style="margin-bottom:12px; display:block;"><input type="radio" name="layer" value="traficom"> Traficom rasterikartta (WMTS, ei vielä konfiguroitu)</label>
 
   <h3>Merenkulkusymbolit</h3>
   <label style="margin-bottom:12px; display:block;"><input type="checkbox" id="seamarkToggle" checked> OpenSeaMap (poijut, loistot, väylät)</label>
@@ -252,8 +253,22 @@ document.getElementById('seamarkToggle').addEventListener('change', (e) => {
   else map.removeLayer(seamarkLayer);
 });
 
+/* Väyläviraston rannikkokartat (rannikkokartat.mbtiles), ladattu paikallisesti
+   SignalK:n charts-resurssiksi (.signalk/charts/). SignalK tarjoilee laatat
+   suoraan omasta chart-tiles-rajapinnastaan, ei vaadi API-avainta eikä
+   internetyhteyttä lataamisen jälkeen. Sama host:portti kuin WebSocket-
+   yhteydessä (ks. connectToSignalK-kutsu tiedoston lopussa). */
+const rannikkokartatLayer = L.tileLayer(
+  `http://${location.hostname}:3000/signalk/chart-tiles/rannikkokartat/{z}/{x}/{y}`,
+  {
+    minZoom: 4,
+    maxZoom: 15,
+    attribution: '© Väylävirasto — Liikenneviraston merikartat'
+  }
+);
+
 /* ------------------------------------------------------------
-   Traficomin rasterikartta lisätään tähän kun API-avain ja
+   Traficomin live-WMTS-rasterikartta lisätään tähän kun API-avain ja
    palvelun tarkka WMTS-osoite/kerrosnimi ovat tiedossa
    (saadaan Traficomin paikkatietopalveluiden rekisteröinnin
    yhteydessä). En arvaa näitä parametreja etukäteen, koska
@@ -276,6 +291,8 @@ document.querySelectorAll('input[name="layer"]').forEach((radio) => {
     map.removeLayer(activeLayer);
     if (e.target.value === 'osm') {
       activeLayer = osmLayer;
+    } else if (e.target.value === 'rannikkokartat') {
+      activeLayer = rannikkokartatLayer;
     } else {
       const key = localStorage.getItem('traficomApiKey');
       const layer = addTraficomLayer(key);
