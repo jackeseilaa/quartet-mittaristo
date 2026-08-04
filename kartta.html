@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#050b12">
 <link rel="manifest" href="manifest.json">
 <title>Quartet — Kartta</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.min.css">
 <style>
   :root{
     --bg-deep:#050b12;
@@ -243,13 +243,13 @@
   <span id="timeStatus">—:—:—</span>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="vendor/leaflet/leaflet.min.js"></script>
 <script>
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.3.0';
-const APP_BUILD = '2026-08-03';
+const APP_VERSION = 'v2.4.0';
+const APP_BUILD = '2026-08-04';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 /* ============================================================
