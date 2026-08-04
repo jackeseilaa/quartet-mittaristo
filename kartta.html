@@ -161,6 +161,31 @@
     font-family:var(--font-display); font-size:11px; color:var(--text-mid);
   }
   body.night .status-strip{ background:rgba(20,3,2,0.9); }
+
+  /* --- Iso SOG/COG-lukema kartan päällä --- */
+  .hud{
+    position:absolute; top:16px; left:16px; z-index:900;
+    display:flex; gap:1px;
+    background:var(--hairline);
+    border-radius:10px;
+    overflow:hidden;
+    box-shadow:0 2px 10px rgba(0,0,0,0.4);
+    pointer-events:none;
+  }
+  .hud-item{
+    background:rgba(13,27,38,0.88);
+    padding:8px 18px;
+    text-align:center;
+  }
+  body.night .hud-item{ background:rgba(20,3,2,0.88); }
+  .hud-value{
+    font-family:var(--font-display); font-size:34px; font-weight:600;
+    color:var(--text-hi); line-height:1; font-variant-numeric:tabular-nums;
+  }
+  .hud-label{
+    font-family:var(--font-label); font-size:10px; color:var(--text-mid);
+    letter-spacing:.1em; text-transform:uppercase; margin-top:3px;
+  }
 </style>
 </head>
 <body>
@@ -177,6 +202,17 @@
 </div>
 
 <div id="map"></div>
+
+<div class="hud">
+  <div class="hud-item">
+    <div class="hud-value" id="hudSog">—</div>
+    <div class="hud-label">SOG kt</div>
+  </div>
+  <div class="hud-item">
+    <div class="hud-value" id="hudCog">—</div>
+    <div class="hud-label">COG</div>
+  </div>
+</div>
 
 <div class="drawer" id="settingsDrawer">
   <h3>Karttataso</h3>
@@ -212,7 +248,7 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.2.0';
+const APP_VERSION = 'v2.3.0';
 const APP_BUILD = '2026-08-03';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
@@ -224,6 +260,10 @@ document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_B
 // lat/lon pysyvät null:ina kunnes ensimmäinen oikea GLL-sijainti saadaan
 // SignalKilta (ks. connectToSignalK() koodin lopussa) — ei koskaan näytetä
 // keksittyä/vanhentunutta sijaintia oman veneen merkkinä.
+// GPS-kurssi (COG) on epäluotettava lähes paikallaan olevalla veneellä —
+// keulan suuntaa ei käännetä COG:n perusteella tämän alle (kts. käyttö alempana).
+const MIN_SOG_FOR_COG_KT = 0.3;
+
 const ownShip = {
   lat: null,
   lon: null,
@@ -545,8 +585,13 @@ function connectToSignalK(host) {
             case 'navigation.courseOverGroundTrue':
               ownShip.cog = wrap360(v.value * 180 / Math.PI);
               // Ei kompassia (esim. Quartetin NX2 ei tällä hetkellä lähetä HDT/HDM-lauseita) ->
-              // käytetään kurssia yli pohjan parhaana arviona keulan suunnasta.
-              if (!ownShip.hasHeading) ownShip.heading = ownShip.cog;
+              // käytetään kurssia yli pohjan varakeinona keulan suunnalle. GPS-COG on kuitenkin
+              // epäluotettava/kohiseva lähes paikallaan (alle n. 0.3 kt), joten silloin keulan
+              // suuntaa ei käännetä — säilytetään viimeisin luotettava suunta sen sijaan että
+              // vene "väräjäisi" ympäri kartalla laiturissa.
+              if (!ownShip.hasHeading && ownShip.sog >= MIN_SOG_FOR_COG_KT) {
+                ownShip.heading = ownShip.cog;
+              }
               break;
             case 'navigation.speedOverGround':
               ownShip.sog = v.value * 1.94384; break; // m/s -> kt
@@ -564,6 +609,8 @@ function connectToSignalK(host) {
             document.getElementById('ownShipStatus').textContent =
               `OMA VENE  SOG ${ownShip.sog.toFixed(1)} kt · COG ${Math.round(ownShip.cog)}°`
               + (ownShip.hasHeading ? ` · HDG ${Math.round(ownShip.heading)}°` : '');
+            document.getElementById('hudSog').textContent = ownShip.sog.toFixed(1);
+            document.getElementById('hudCog').textContent = Math.round(ownShip.cog) + '°';
           }
         } else if (context && context.startsWith('vessels.')) {
           let entry = aisVessels.get(context);
