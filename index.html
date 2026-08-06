@@ -391,7 +391,7 @@
    VERSIONUMERO — kasvatetaan jokaisen muutoksen yhteydessä,
    niin näet suoraan käyttöliittymästä onko sinulla uusin versio.
    ============================================================ */
-const APP_VERSION = 'v3.2.0';
+const APP_VERSION = 'v3.2.1';
 const APP_BUILD = '2026-08-06';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
@@ -408,13 +408,15 @@ const state = {
   lon: 25.0234
 };
 
-// HUOM: nämä ovat syvyys PINNASTA (environment.depth.belowSurface), ei enää
-// syvyys kölin alla -- NX2 ei lähetä belowKeel-polkua. Jos haluat hälytykset
-// nimenomaan kölin varaan, lisää näihin Quartetin syväys (esim. jos syväys on
-// 1.8 m, ja haluat 1.5 m varan kölin alle, DANGER olisi 1.8+1.5=3.3 pinnasta).
-// Säädä oikeaan arvoon kun Quartetin syväys on tiedossa.
-const KEEL_DRAFT_WARN_M = 3.0;
-const KEEL_DRAFT_DANGER_M = 1.5;
+// Syvyyslukema (state.depth) on PINNASTA (environment.depth.belowSurface),
+// ei kölin alla -- NX2 ei lähetä belowKeel-polkua. Jotta hälytykset
+// laukeaisivat oikeassa kohdassa vapaan veden (kölin alla) mukaan, Quartetin
+// syväys lisätään haluttuun kölivaraan, ja tulos verrataan pinta-syvyyteen.
+const QUARTET_DRAFT_M = 2.0; // Quartetin syväys
+const KEEL_CLEARANCE_WARN_M = 3.0;   // haluttu minimivara kölin alla, varoitus
+const KEEL_CLEARANCE_DANGER_M = 1.5; // haluttu minimivara kölin alla, vaara
+const KEEL_DRAFT_WARN_M = QUARTET_DRAFT_M + KEEL_CLEARANCE_WARN_M;
+const KEEL_DRAFT_DANGER_M = QUARTET_DRAFT_M + KEEL_CLEARANCE_DANGER_M;
 
 // Quartetin nousukulma — eri asteluku tosi- ja näennäiselle tuulelle, säädä tarpeen mukaan
 const NO_GO_ANGLE_TRUE_DEG = 25;
