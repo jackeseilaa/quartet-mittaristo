@@ -340,7 +340,7 @@
   </div>
 
   <div class="card num-card">
-    <div class="card-label">Syvyys (kölin alla)</div>
+    <div class="card-label">Syvyys (pinnasta)</div>
     <div class="value"><span id="depthValue">—</span><span class="unit">m</span></div>
     <div class="depth-bar-track"><div class="depth-bar-fill" id="depthBar" style="width:60%"></div></div>
     <div class="sub" id="depthNote">Hälytysraja säädettävissä Quartetin syväyksen mukaan</div>
@@ -391,8 +391,8 @@
    VERSIONUMERO — kasvatetaan jokaisen muutoksen yhteydessä,
    niin näet suoraan käyttöliittymästä onko sinulla uusin versio.
    ============================================================ */
-const APP_VERSION = 'v3.1.1';
-const APP_BUILD = '2026-08-03';
+const APP_VERSION = 'v3.2.0';
+const APP_BUILD = '2026-08-06';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 const state = {
@@ -403,12 +403,16 @@ const state = {
   sog: 6.1,
   stw: 5.9,
   cog: 214,
-  depth: 6.4,   // m kölin alla
+  depth: 6.4,   // m pinnasta
   lat: 60.1856,
   lon: 25.0234
 };
 
-// Quartetin syväys — säädä oikeaan arvoon kun tiedossa
+// HUOM: nämä ovat syvyys PINNASTA (environment.depth.belowSurface), ei enää
+// syvyys kölin alla -- NX2 ei lähetä belowKeel-polkua. Jos haluat hälytykset
+// nimenomaan kölin varaan, lisää näihin Quartetin syväys (esim. jos syväys on
+// 1.8 m, ja haluat 1.5 m varan kölin alle, DANGER olisi 1.8+1.5=3.3 pinnasta).
+// Säädä oikeaan arvoon kun Quartetin syväys on tiedossa.
 const KEEL_DRAFT_WARN_M = 3.0;
 const KEEL_DRAFT_DANGER_M = 1.5;
 
@@ -841,7 +845,9 @@ function connectToSignalK(host) {
             state.twa = applyWindCalibration(v.value * 180 / Math.PI); break;
           case 'environment.wind.speedTrue':
             state.tws = v.value; break; // m/s
-          case 'environment.depth.belowKeel':
+          case 'environment.depth.belowSurface':
+            // NX2 ei lähetä belowKeel-polkua lainkaan -- belowSurface (pinnasta
+            // pohjaan) on sama polku jota kartta.htmlin HUD käyttää.
             state.depth = v.value; break;
           case 'navigation.speedOverGround':
             state.sog = v.value * 1.94384; break; // m/s -> kt

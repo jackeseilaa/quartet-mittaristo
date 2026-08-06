@@ -37,6 +37,10 @@
     --ais-target:#e05a2e;
   }
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  /* Estä iOS Safarin automaattinen tekstin suurentaminen (text autosizing) --
+     ilman tätä lyhyet nowrap-tekstipalat (esim. AIS-labelit) voivat renderöityä
+     moninkertaisen kokoisina CSS:n font-sizeen nähden, riippumatta laitteesta. */
+  html{ -webkit-text-size-adjust:100%; text-size-adjust:100%; }
   html,body{ height:100%; margin:0; }
   body{
     background:var(--bg-deep);
@@ -114,12 +118,16 @@
   .ais-label{
     font-family:var(--font-display);
     font-size:10px;
+    line-height:1.2;
     color:var(--ais-target);
     background:rgba(5,11,18,0.75);
     padding:1px 4px;
     border-radius:2px;
     margin-top:2px;
     white-space:nowrap;
+    max-width:82px;
+    overflow:hidden;
+    text-overflow:ellipsis;
   }
 
   /* --- Settings drawer --- */
@@ -164,7 +172,10 @@
 
   /* --- Iso SOG/COG-lukema kartan päällä --- */
   .hud{
-    position:absolute; top:16px; left:16px; z-index:900;
+    /* top = topbarin korkeus (49px, sama kuin #map:in top) + 16px marginaali --
+       aiemmin tämä oli 16px suoraan viewportista, jolloin HUD jäi topbarin
+       (korkeampi z-index, oma taustaväri) alle piiloon/leikkautuneeksi. */
+    position:absolute; top:65px; left:16px; z-index:900;
     display:flex; gap:1px;
     background:var(--hairline);
     border-radius:10px;
@@ -212,6 +223,10 @@
     <div class="hud-value" id="hudCog">—</div>
     <div class="hud-label">COG</div>
   </div>
+  <div class="hud-item">
+    <div class="hud-value" id="hudDepth">—</div>
+    <div class="hud-label">Syvyys m</div>
+  </div>
 </div>
 
 <div class="drawer" id="settingsDrawer">
@@ -248,7 +263,7 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.4.0';
+const APP_VERSION = 'v2.6.0';
 const APP_BUILD = '2026-08-04';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
@@ -270,7 +285,8 @@ const ownShip = {
   heading: 0,        // paras arvio keulan suunnasta: oikea kompassisuunta (HDT) jos saatavilla, muuten COG
   hasHeading: false,  // true heti kun navigation.headingTrue on saatu edes kerran
   cog: 0,             // kurssi yli pohjan, aina VTG:stä — näytetään aina erikseen
-  sog: 0
+  sog: 0,
+  depth: null         // syvyys pinnasta (environment.depth.belowSurface), m
 };
 
 // Vain kartan alkunäkymän keskitystä varten ennen ensimmäistä oikeaa sijaintia
@@ -279,9 +295,15 @@ const INITIAL_VIEW = { lat: 60.1856, lon: 25.0234 };
 
 function wrap360(deg){ return ((deg % 360) + 360) % 360; }
 
-/* --- Kartta --- */
-const map = L.map('map', { zoomControl: true, attributionControl: true })
+/* --- Kartta ---
+   zoomControl:false + oma L.control.zoom({position:'topright'}) alempana,
+   koska oletuspaikka (topleft) meni päällekkäin SOG/COG-HUD:n kanssa.
+   maxZoom asetetaan aina aktiivisen pohjatason mukaan (ks. LAYER_MAX_ZOOM
+   alempana) -- ilman tätä kartan pystyi zoomaamaan pidemmälle kuin millään
+   tasolla on laattoja, jolloin ruutu meni mustaksi. */
+const map = L.map('map', { zoomControl: false, attributionControl: true, maxZoom: 15 })
   .setView([INITIAL_VIEW.lat, INITIAL_VIEW.lon], 13);
+L.control.zoom({ position: 'topright' }).addTo(map);
 
 const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
@@ -325,10 +347,12 @@ function addTraficomLayer(apiKey){
    Oletus on rannikkokartat, ei OpenStreetMap. */
 const LAYER_STORAGE_KEY = 'quartetMapLayer';
 const layersByKey = { osm: osmLayer, rannikkokartat: rannikkokartatLayer };
+const LAYER_MAX_ZOOM = { osm: 19, rannikkokartat: 15, traficom: 18 };
 let activeLayerKey = localStorage.getItem(LAYER_STORAGE_KEY) || 'rannikkokartat';
 if (!layersByKey[activeLayerKey]) activeLayerKey = 'rannikkokartat'; // esim. tallennettu 'traficom', joka ei viela toimi valittavana pohjana
 let activeLayer = layersByKey[activeLayerKey];
 activeLayer.addTo(map);
+map.setMaxZoom(LAYER_MAX_ZOOM[activeLayerKey] || 15);
 const initialRadio = document.querySelector(`input[name="layer"][value="${activeLayerKey}"]`);
 if (initialRadio) initialRadio.checked = true;
 
@@ -359,6 +383,7 @@ document.querySelectorAll('input[name="layer"]').forEach((radio) => {
       activeLayer = layer || osmLayer;
     }
     activeLayer.addTo(map);
+    map.setMaxZoom(LAYER_MAX_ZOOM[e.target.value] || 15);
     localStorage.setItem(LAYER_STORAGE_KEY, e.target.value);
     if (document.getElementById('seamarkToggle').checked) seamarkLayer.bringToFront();
   });
@@ -388,16 +413,32 @@ let ownShipMarker = null;
    tai muu lähde), ei mock-datasta — ks. connectToSignalK() koodin lopussa.
    Map avaimena SignalK-deltan context (esim.
    "vessels.urn:mrn:imo:mmsi:230099999"), arvona {lat,lon,heading,sog,name,marker,lastSeen}. */
-function aisIcon(headingDeg, name){
+// Alle tämän zoomtason ei näytetä nimi/MMSI-lappuja, vain pieni kolmio --
+// kun useampi AIS-kohde on lähekkäin (esim. ahdas väylä/satama), isot
+// päällekkäiset numerolaput peittivät muuten ison osan kartasta.
+const AIS_LABEL_MIN_ZOOM = 14;
+
+function aisIcon(headingDeg, name, showLabel){
+  const label = showLabel ? `<div class="ais-label">${name}</div>` : '';
   const html = `
     <div class="ais-icon">
       <div class="tri" style="transform:rotate(${headingDeg}deg)"></div>
-      <div class="ais-label">${name}</div>
+      ${label}
     </div>`;
   return L.divIcon({ html, className: '', iconSize: [60, 40], iconAnchor: [30, 12] });
 }
 const aisVessels = new Map();
 const AIS_STALE_MS = 2 * 60 * 1000; // poistetaan kartalta jos ei päivity 2 min
+
+// Päivitä kaikkien AIS-kohteiden labelit heti kun zoomia vaihdetaan, ei vain
+// seuraavan datapäivityksen yhteydessä -- muuten ulos zoomatessa vanhat
+// isot laput jäisivät näkyviin kunnes kyseinen alus lähettää seuraavan kerran.
+map.on('zoomend', () => {
+  const showLabel = map.getZoom() >= AIS_LABEL_MIN_ZOOM;
+  aisVessels.forEach((entry) => {
+    if (entry.marker) entry.marker.setIcon(aisIcon(entry.heading, entry.name, showLabel));
+  });
+});
 
 function mmsiFromContext(context){
   const m = /mmsi:(\d+)/.exec(context || '');
@@ -595,6 +636,8 @@ function connectToSignalK(host) {
               break;
             case 'navigation.speedOverGround':
               ownShip.sog = v.value * 1.94384; break; // m/s -> kt
+            case 'environment.depth.belowSurface':
+              ownShip.depth = v.value; break; // m
           }
           if (ownShip.lat !== null && ownShip.lon !== null) {
             if (!ownShipMarker) {
@@ -611,6 +654,7 @@ function connectToSignalK(host) {
               + (ownShip.hasHeading ? ` · HDG ${Math.round(ownShip.heading)}°` : '');
             document.getElementById('hudSog').textContent = ownShip.sog.toFixed(1);
             document.getElementById('hudCog').textContent = Math.round(ownShip.cog) + '°';
+            document.getElementById('hudDepth').textContent = ownShip.depth === null ? '—' : ownShip.depth.toFixed(1);
           }
         } else if (context && context.startsWith('vessels.')) {
           let entry = aisVessels.get(context);
@@ -631,11 +675,12 @@ function connectToSignalK(host) {
               entry.sog = v.value * 1.94384; break; // m/s -> kt
           }
           if (entry.lat !== null && entry.lon !== null) {
+            const showLabel = map.getZoom() >= AIS_LABEL_MIN_ZOOM;
             if (!entry.marker) {
-              entry.marker = L.marker([entry.lat, entry.lon], { icon: aisIcon(entry.heading, entry.name) }).addTo(map);
+              entry.marker = L.marker([entry.lat, entry.lon], { icon: aisIcon(entry.heading, entry.name, showLabel) }).addTo(map);
             } else {
               entry.marker.setLatLng([entry.lat, entry.lon]);
-              entry.marker.setIcon(aisIcon(entry.heading, entry.name));
+              entry.marker.setIcon(aisIcon(entry.heading, entry.name, showLabel));
             }
           }
           updateAisStatus();
