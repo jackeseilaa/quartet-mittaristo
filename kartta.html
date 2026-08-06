@@ -233,17 +233,10 @@
   <h3>Karttataso</h3>
   <label><input type="radio" name="layer" value="osm" checked> OpenStreetMap (ei avainta)</label>
   <label style="margin-bottom:12px; display:block;"><input type="radio" name="layer" value="rannikkokartat"> Rannikkokartat (SignalK, offline)</label>
-  <label style="margin-bottom:12px; display:block;"><input type="radio" name="layer" value="traficom"> Traficom rasterikartta (WMTS, ei vielä konfiguroitu)</label>
+  <label style="margin-bottom:12px; display:block;"><input type="radio" name="layer" value="traficom"> Traficom merikartta (julkinen WMTS, live)</label>
 
   <h3>Merenkulkusymbolit</h3>
   <label style="margin-bottom:12px; display:block;"><input type="checkbox" id="seamarkToggle" checked> OpenSeaMap (poijut, loistot, väylät)</label>
-
-  <h3>Traficom API-avain</h3>
-  <input type="text" id="traficomKeyInput" placeholder="Liitä API-avain tähän">
-  <button class="drawer-btn" id="saveKeyBtn">Tallenna avain</button>
-  <div class="note">
-    Rasterikartta vaatii rekisteröitymisen Suomi.fi-valtuuksilla (esim. J Sailing Tmi:n kautta) Traficomin paikkatietopalveluihin. Kun avain ja palvelun tarkka WMTS-osoite ovat tiedossa, ne täydennetään <code>addTraficomLayer()</code>-funktioon koodissa.
-  </div>
 
   <h3 style="margin-top:16px;">Offline-käyttö</h3>
   <button class="drawer-btn" id="downloadAreaBtn">Lataa näkyvä alue offline</button>
@@ -263,8 +256,8 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.6.0';
-const APP_BUILD = '2026-08-04';
+const APP_VERSION = 'v2.7.0';
+const APP_BUILD = '2026-08-06';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 /* ============================================================
@@ -324,32 +317,37 @@ const rannikkokartatLayer = L.tileLayer(
   }
 );
 
-/* ------------------------------------------------------------
-   Traficomin live-WMTS-rasterikartta lisätään tähän kun API-avain ja
-   palvelun tarkka WMTS-osoite/kerrosnimi ovat tiedossa
-   (saadaan Traficomin paikkatietopalveluiden rekisteröinnin
-   yhteydessä). En arvaa näitä parametreja etukäteen, koska
-   väärä kerrosnimi/URL näyttäisi vain tyhjän tai virheellisen
-   kartan navigointikäytössä.
-   ------------------------------------------------------------ */
-function addTraficomLayer(apiKey){
-  console.warn('Traficom-kerrosta ei ole vielä konfiguroitu — täydennä WMTS-osoite ja kerrosnimi tähän funktioon.');
-  // Esimerkkirunko kun tiedot ovat käsillä:
-  // return L.tileLayer('https://<traficom-wmts-osoite>/{z}/{x}/{y}.png?api_key=' + apiKey, {
-  //   maxZoom: 18,
-  //   attribution: '© Traficom'
-  // });
+/* Traficomin julkinen WMTS-merikarttapalvelu (julkinen.traficom.fi) --
+   EI vaadi rekisteröitymistä eikä API-avainta, todennettu 2026-08-06 (HTTP 200,
+   oikea PNG-laatta ilman tunnuksia). "Merikarttasarja A public" kattaa koko
+   Suomen rannikon, TileMatrixSet WGS84_Pseudo-Mercator (= sama EPSG:3857 kuin
+   Leaflet käyttää oletuksena) tukee zoomeja 5-15. Huom kaksi erikoisuutta REST-
+   URL:ssa: kerrosnimessä on välilyönti (pitää olla %20-koodattuna), ja
+   oletustyylin tunniste on tyhjä merkkijono (kaksoiskauttoviiva layerin ja
+   TileMatrixSetin välissä on siis oikein, ei kirjoitusvirhe).
+   Lisenssi CC BY 4.0, "Ei navigointikäyttöön" (sama huomautus kuin
+   rannikkokartat.mbtiles:llä). */
+function addTraficomLayer(){
+  return L.tileLayer(
+    'https://julkinen.traficom.fi/rasteripalvelu/wmts/rest/Traficom:Merikarttasarja%20A%20public//WGS84_Pseudo-Mercator/WGS84_Pseudo-Mercator:{z}/{y}/{x}?format=image/png',
+    {
+      minZoom: 5,
+      maxZoom: 15,
+      attribution: '© Traficom'
+    }
+  );
 }
 
 /* --- Karttatason vaihto ---
    Valittu taso muistetaan localStoragessa, jotta se säilyy vaikka siirryttäisiin
    mittaristo-sivulle ja takaisin (jokainen sivu ladataan aina kokonaan uudestaan).
    Oletus on rannikkokartat, ei OpenStreetMap. */
+const traficomLayer = addTraficomLayer();
 const LAYER_STORAGE_KEY = 'quartetMapLayer';
-const layersByKey = { osm: osmLayer, rannikkokartat: rannikkokartatLayer };
-const LAYER_MAX_ZOOM = { osm: 19, rannikkokartat: 15, traficom: 18 };
+const layersByKey = { osm: osmLayer, rannikkokartat: rannikkokartatLayer, traficom: traficomLayer };
+const LAYER_MAX_ZOOM = { osm: 19, rannikkokartat: 15, traficom: 15 };
 let activeLayerKey = localStorage.getItem(LAYER_STORAGE_KEY) || 'rannikkokartat';
-if (!layersByKey[activeLayerKey]) activeLayerKey = 'rannikkokartat'; // esim. tallennettu 'traficom', joka ei viela toimi valittavana pohjana
+if (!layersByKey[activeLayerKey]) activeLayerKey = 'rannikkokartat';
 let activeLayer = layersByKey[activeLayerKey];
 activeLayer.addTo(map);
 map.setMaxZoom(LAYER_MAX_ZOOM[activeLayerKey] || 15);
@@ -373,15 +371,7 @@ document.getElementById('seamarkToggle').addEventListener('change', (e) => {
 document.querySelectorAll('input[name="layer"]').forEach((radio) => {
   radio.addEventListener('change', (e) => {
     map.removeLayer(activeLayer);
-    if (e.target.value === 'osm') {
-      activeLayer = osmLayer;
-    } else if (e.target.value === 'rannikkokartat') {
-      activeLayer = rannikkokartatLayer;
-    } else {
-      const key = localStorage.getItem('traficomApiKey');
-      const layer = addTraficomLayer(key);
-      activeLayer = layer || osmLayer;
-    }
+    activeLayer = layersByKey[e.target.value] || osmLayer;
     activeLayer.addTo(map);
     map.setMaxZoom(LAYER_MAX_ZOOM[e.target.value] || 15);
     localStorage.setItem(LAYER_STORAGE_KEY, e.target.value);
@@ -480,14 +470,6 @@ const drawer = document.getElementById('settingsDrawer');
 document.getElementById('settingsToggle').addEventListener('click', () => {
   drawer.classList.toggle('open');
 });
-const keyInput = document.getElementById('traficomKeyInput');
-const savedKey = localStorage.getItem('traficomApiKey');
-if (savedKey) keyInput.value = savedKey;
-document.getElementById('saveKeyBtn').addEventListener('click', () => {
-  localStorage.setItem('traficomApiKey', keyInput.value.trim());
-  keyInput.placeholder = 'Avain tallennettu';
-});
-
 /* --- Offline-alueen esilataus ---
    Muuntaa nykyisen näkymän rajat karttalaattojen x/y-koordinaateiksi
    usealla zoomtasolla ja hakee ne verkosta -- service worker tallentaa
