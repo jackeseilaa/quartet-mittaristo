@@ -205,6 +205,30 @@
   .mode-btn.active{ border-color:var(--cyan); color:var(--cyan); }
   .mode-btn:active{ transform:scale(.97); }
 
+  .nogo-adjust{
+    display:flex; align-items:center; justify-content:center; gap:10px;
+    margin-top:6px;
+  }
+  .nogo-adjust button{
+    font-family:var(--font-display);
+    font-size:16px;
+    width:28px; height:28px;
+    border-radius:50%;
+    border:1px solid var(--hairline);
+    background:var(--bg-panel-raised);
+    color:var(--text-mid);
+    cursor:pointer;
+    line-height:1;
+  }
+  .nogo-adjust button:active{ transform:scale(.93); }
+  .nogo-adjust span{
+    font-family:var(--font-display);
+    font-size:13px;
+    color:var(--text-low);
+    min-width:8ch;
+    text-align:center;
+  }
+
   /* --- Big numeric readouts --- */
   .num-card .value{
     font-family:var(--font-display);
@@ -326,6 +350,11 @@
       <button type="button" class="mode-btn" data-mode="true">Tosi</button>
     </div>
     <div class="wind-caption" id="noGoCaption" style="margin-top:2px; color:var(--text-low);">—</div>
+    <div class="nogo-adjust">
+      <button type="button" id="noGoTrueDec">−</button>
+      <span id="noGoTrueLabel">Nousukulma (tosi) —°</span>
+      <button type="button" id="noGoTrueInc">+</button>
+    </div>
   </div>
 
   <div class="card num-card">
@@ -391,8 +420,8 @@
    VERSIONUMERO — kasvatetaan jokaisen muutoksen yhteydessä,
    niin näet suoraan käyttöliittymästä onko sinulla uusin versio.
    ============================================================ */
-const APP_VERSION = 'v3.2.1';
-const APP_BUILD = '2026-08-06';
+const APP_VERSION = 'v3.3.0';
+const APP_BUILD = '2026-08-13';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 const state = {
@@ -418,8 +447,11 @@ const KEEL_CLEARANCE_DANGER_M = 1.5; // haluttu minimivara kölin alla, vaara
 const KEEL_DRAFT_WARN_M = QUARTET_DRAFT_M + KEEL_CLEARANCE_WARN_M;
 const KEEL_DRAFT_DANGER_M = QUARTET_DRAFT_M + KEEL_CLEARANCE_DANGER_M;
 
-// Quartetin nousukulma — eri asteluku tosi- ja näennäiselle tuulelle, säädä tarpeen mukaan
-const NO_GO_ANGLE_TRUE_DEG = 25;
+// Quartetin nousukulma — eri asteluku tosi- ja näennäiselle tuulelle, säädä tarpeen mukaan.
+// Tosituulen kulma on säädettävissä myös suoraan käyttöliittymästä (+/- napit
+// tuulikompassin alla), arvo tallentuu localStorageen ja säilyy sivun päivityksen yli.
+const NO_GO_TRUE_STORAGE_KEY = 'quartetNoGoAngleTrueDeg';
+let NO_GO_ANGLE_TRUE_DEG = Number(localStorage.getItem(NO_GO_TRUE_STORAGE_KEY)) || 32;
 const NO_GO_ANGLE_APPARENT_DEG = 18;
 
 // TUULIKULMAN KALIBROINTI
@@ -554,6 +586,7 @@ function buildCompass(){
 
 function buildNoGoZone(){
   const zone = document.getElementById('noGoZone');
+  zone.innerHTML = ''; // uudelleenpiirretään mahdollisesti aiemman kutsun päälle (kulman säätö)
   const cx = 150, cy = 150, rOuter = 130, rInner = 60;
   const toXY = (deg, r) => {
     const rad = (deg - 90) * Math.PI / 180;
@@ -611,6 +644,23 @@ function updateNoGoVisibility(){
     });
   });
 }
+
+function updateNoGoTrueLabel(){
+  document.getElementById('noGoTrueLabel').textContent = `Nousukulma (tosi) ${NO_GO_ANGLE_TRUE_DEG}°`;
+}
+
+function adjustNoGoAngleTrue(deltaDeg){
+  NO_GO_ANGLE_TRUE_DEG = Math.max(15, Math.min(60, NO_GO_ANGLE_TRUE_DEG + deltaDeg));
+  localStorage.setItem(NO_GO_TRUE_STORAGE_KEY, String(NO_GO_ANGLE_TRUE_DEG));
+  updateNoGoTrueLabel();
+  buildNoGoZone();
+  updateNoGoVisibility();
+  render();
+}
+
+document.getElementById('noGoTrueDec').addEventListener('click', () => adjustNoGoAngleTrue(-1));
+document.getElementById('noGoTrueInc').addEventListener('click', () => adjustNoGoAngleTrue(1));
+updateNoGoTrueLabel();
 
 document.getElementById('windModeToggle').addEventListener('click', (e) => {
   const btn = e.target.closest('.mode-btn');
