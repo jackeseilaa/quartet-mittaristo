@@ -346,11 +346,16 @@
       </div>
     </div>
     <div class="wind-mode-toggle" id="windModeToggle">
-      <button type="button" class="mode-btn active" data-mode="apparent">Näennäinen</button>
+      <button type="button" class="mode-btn active" data-mode="apparent">Suhteellinen</button>
       <button type="button" class="mode-btn" data-mode="true">Tosi</button>
     </div>
     <div class="wind-caption" id="noGoCaption" style="margin-top:2px; color:var(--text-low);">—</div>
-    <div class="nogo-adjust">
+    <div class="nogo-adjust" id="noGoApparentAdjust">
+      <button type="button" id="noGoApparentDec">−</button>
+      <span id="noGoApparentLabel">Nousukulma (suhteellinen) —°</span>
+      <button type="button" id="noGoApparentInc">+</button>
+    </div>
+    <div class="nogo-adjust" id="noGoTrueAdjust" style="display:none;">
       <button type="button" id="noGoTrueDec">−</button>
       <span id="noGoTrueLabel">Nousukulma (tosi) —°</span>
       <button type="button" id="noGoTrueInc">+</button>
@@ -420,7 +425,7 @@
    VERSIONUMERO — kasvatetaan jokaisen muutoksen yhteydessä,
    niin näet suoraan käyttöliittymästä onko sinulla uusin versio.
    ============================================================ */
-const APP_VERSION = 'v3.3.0';
+const APP_VERSION = 'v3.4.0';
 const APP_BUILD = '2026-08-13';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
@@ -452,7 +457,8 @@ const KEEL_DRAFT_DANGER_M = QUARTET_DRAFT_M + KEEL_CLEARANCE_DANGER_M;
 // tuulikompassin alla), arvo tallentuu localStorageen ja säilyy sivun päivityksen yli.
 const NO_GO_TRUE_STORAGE_KEY = 'quartetNoGoAngleTrueDeg';
 let NO_GO_ANGLE_TRUE_DEG = Number(localStorage.getItem(NO_GO_TRUE_STORAGE_KEY)) || 32;
-const NO_GO_ANGLE_APPARENT_DEG = 18;
+const NO_GO_APPARENT_STORAGE_KEY = 'quartetNoGoAngleApparentDeg';
+let NO_GO_ANGLE_APPARENT_DEG = Number(localStorage.getItem(NO_GO_APPARENT_STORAGE_KEY)) || 18;
 
 // TUULIKULMAN KALIBROINTI
 // Jos tuulen suunta näyttää väärältä (esim. lähes vastakkaiselta todelliseen
@@ -649,6 +655,10 @@ function updateNoGoTrueLabel(){
   document.getElementById('noGoTrueLabel').textContent = `Nousukulma (tosi) ${NO_GO_ANGLE_TRUE_DEG}°`;
 }
 
+function updateNoGoApparentLabel(){
+  document.getElementById('noGoApparentLabel').textContent = `Nousukulma (suhteellinen) ${NO_GO_ANGLE_APPARENT_DEG}°`;
+}
+
 function adjustNoGoAngleTrue(deltaDeg){
   NO_GO_ANGLE_TRUE_DEG = Math.max(15, Math.min(60, NO_GO_ANGLE_TRUE_DEG + deltaDeg));
   localStorage.setItem(NO_GO_TRUE_STORAGE_KEY, String(NO_GO_ANGLE_TRUE_DEG));
@@ -658,9 +668,28 @@ function adjustNoGoAngleTrue(deltaDeg){
   render();
 }
 
+function adjustNoGoAngleApparent(deltaDeg){
+  NO_GO_ANGLE_APPARENT_DEG = Math.max(15, Math.min(60, NO_GO_ANGLE_APPARENT_DEG + deltaDeg));
+  localStorage.setItem(NO_GO_APPARENT_STORAGE_KEY, String(NO_GO_ANGLE_APPARENT_DEG));
+  updateNoGoApparentLabel();
+  buildNoGoZone();
+  updateNoGoVisibility();
+  render();
+}
+
 document.getElementById('noGoTrueDec').addEventListener('click', () => adjustNoGoAngleTrue(-1));
 document.getElementById('noGoTrueInc').addEventListener('click', () => adjustNoGoAngleTrue(1));
 updateNoGoTrueLabel();
+
+document.getElementById('noGoApparentDec').addEventListener('click', () => adjustNoGoAngleApparent(-1));
+document.getElementById('noGoApparentInc').addEventListener('click', () => adjustNoGoAngleApparent(1));
+updateNoGoApparentLabel();
+
+function updateNoGoAdjustVisibility(){
+  document.getElementById('noGoTrueAdjust').style.display = (windMode === 'true') ? '' : 'none';
+  document.getElementById('noGoApparentAdjust').style.display = (windMode === 'apparent') ? '' : 'none';
+}
+updateNoGoAdjustVisibility();
 
 document.getElementById('windModeToggle').addEventListener('click', (e) => {
   const btn = e.target.closest('.mode-btn');
@@ -668,6 +697,7 @@ document.getElementById('windModeToggle').addEventListener('click', (e) => {
   windMode = btn.dataset.mode;
   document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b === btn));
   updateNoGoVisibility();
+  updateNoGoAdjustVisibility();
   render();
 });
 
