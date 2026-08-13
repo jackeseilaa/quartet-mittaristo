@@ -284,7 +284,7 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.10.1';
+const APP_VERSION = 'v2.10.2';
 const APP_BUILD = '2026-08-13';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
@@ -364,14 +364,28 @@ function initialBearingDeg(lat1, lon1, lat2, lon2){
 const METERS_PER_NM = 1852;
 let measureActive = false;
 let measurePointA = null;
-let measureLine = null;
+let measureLineCasing = null, measureLine = null;
 let measureMarkerA = null, measureMarkerB = null;
+
+// Mittaustyökalun väri haetaan --amber-muuttujasta (teemakohtainen, oranssi
+// päivällä/yöllä), lisäksi musta "halo"-reunus sekä pisteissä että viivassa --
+// pelkkä valkoinen ei erottunut vaaleilla merikartoilla/rannoilla ollenkaan.
+function measureColor(){
+  return getComputedStyle(document.documentElement).getPropertyValue('--amber').trim();
+}
 
 function clearMeasurement(){
   if (measureLine) { map.removeLayer(measureLine); measureLine = null; }
+  if (measureLineCasing) { map.removeLayer(measureLineCasing); measureLineCasing = null; }
   if (measureMarkerA) { map.removeLayer(measureMarkerA); measureMarkerA = null; }
   if (measureMarkerB) { map.removeLayer(measureMarkerB); measureMarkerB = null; }
   measurePointA = null;
+}
+
+function measureMarker(latlng){
+  return L.circleMarker(latlng, {
+    radius: 6, color: '#000', weight: 2, fillColor: measureColor(), fillOpacity: 1
+  });
 }
 
 function onMeasureMapClick(e){
@@ -381,18 +395,18 @@ function onMeasureMapClick(e){
     // Ensimmäinen piste (tai edellinen mittaus oli jo valmis -> aloita uusi)
     clearMeasurement();
     measurePointA = [lat, lng];
-    measureMarkerA = L.circleMarker(measurePointA, {
-      radius: 5, color: '#fff', fillColor: '#fff', fillOpacity: 1, weight: 2
-    }).addTo(map);
+    measureMarkerA = measureMarker(measurePointA).addTo(map);
     return;
   }
   const distM = haversineDistanceM(measurePointA[0], measurePointA[1], lat, lng);
   const bearing = initialBearingDeg(measurePointA[0], measurePointA[1], lat, lng);
   const distNm = distM / METERS_PER_NM;
-  measureMarkerB = L.circleMarker([lat, lng], {
-    radius: 5, color: '#fff', fillColor: '#fff', fillOpacity: 1, weight: 2
-  }).addTo(map);
-  measureLine = L.polyline([measurePointA, [lat, lng]], { color: '#fff', weight: 2, dashArray: '6 6' })
+  measureMarkerB = measureMarker([lat, lng]).addTo(map);
+  // Musta "casing"-viiva ensin (leveämpi, alla), värillinen mittausviiva päälle --
+  // näkyy näin kunnolla riippumatta taustan väristä.
+  measureLineCasing = L.polyline([measurePointA, [lat, lng]], { color: '#000', weight: 6, opacity: 0.55 })
+    .addTo(map);
+  measureLine = L.polyline([measurePointA, [lat, lng]], { color: measureColor(), weight: 3, dashArray: '6 6' })
     .bindTooltip(`${distNm.toFixed(2)} mi · ${Math.round(bearing)}°T`, { permanent: true, direction: 'center', className: 'measure-tooltip' })
     .addTo(map);
 }
