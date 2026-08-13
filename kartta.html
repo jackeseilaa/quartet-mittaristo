@@ -284,7 +284,7 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.10.3';
+const APP_VERSION = 'v2.10.4';
 const APP_BUILD = '2026-08-13';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
@@ -660,7 +660,16 @@ map.on('click', onMeasureMapClick);
 document.getElementById('measureToggle').addEventListener('click', (e) => {
   measureActive = !measureActive;
   e.currentTarget.classList.toggle('active', measureActive);
-  if (!measureActive) clearMeasurement();
+  // Mittaustila vaatii kaksi erillista napautusta -- Leafletin oletus
+  // tuplaklikkauszoomaus tulkitsee kosketusnaytolla lahekkain tulevat
+  // napautukset helposti "tuplaklikkaukseksi" (zoomaa, ei aseta pistetta),
+  // jolloin mittaus ei koskaan valmistu. Pois paalta mittauksen ajaksi.
+  if (measureActive) {
+    map.doubleClickZoom.disable();
+  } else {
+    map.doubleClickZoom.enable();
+    clearMeasurement();
+  }
 });
 
 /* ============================================================
