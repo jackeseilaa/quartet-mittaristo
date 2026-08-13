@@ -284,8 +284,8 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.10.0';
-const APP_BUILD = '2026-08-08';
+const APP_VERSION = 'v2.10.1';
+const APP_BUILD = '2026-08-13';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 /* ============================================================
@@ -509,11 +509,19 @@ let ownShipMarker = null;
 
 /* --- Tuuli- ja ennustenuolet (samaan tapaan kuin KIP:n chartplotter-widget) ---
    Kolme viivaa omalta sijainnilta: tosi tuulen suunta, näennäisen tuulen
-   suunta (molemmat kiinteän pituisia, 0.08mi), ja 30min dead-reckoning
-   -ennuste (pituus = SOG*30min, suunta COG). Kaikki nuolen suunnat ovat
-   absoluuttisia kompassisuuntia laskettuna ownShip.headingista (paras
-   arvio keulan suunnasta) + suhteellisesta tuulikulmasta. */
-const WIND_ARROW_LENGTH_M = 150; // ~0.08mi, kiinteä pituus tuulinuolille
+   suunta (molemmat kiinteän RUUTUPITUISIA, ei maailmanpituisia — ks. alla),
+   ja 30min dead-reckoning-ennuste (pituus = SOG*30min, suunta COG, oikea
+   maailmanmittakaava koska esittää todellista ennustettua matkaa). Kaikki
+   nuolen suunnat ovat absoluuttisia kompassisuuntia laskettuna
+   ownShip.headingista (paras arvio keulan suunnasta) + suhteellisesta
+   tuulikulmasta. */
+const WIND_ARROW_LENGTH_PX = 60; // tuulinuolten pituus ruutupikseleinä, ei metreinä --
+  // aiemmin kiinteä 150m osoittautui käytännössä näkymättömäksi kaukana
+  // zoomatussa kartassa (150m on vain murto-osa pikseliä kaupunkitason zoomilla).
+function metersPerPixel(atLat){
+  // Web Mercatorin (EPSG:3857, Leafletin oletus) vakiokaava zoomtason resoluutiolle.
+  return 156543.03392 * Math.cos(atLat * Math.PI / 180) / Math.pow(2, map.getZoom());
+}
 const DR_MINUTES = 10;
 let windTrueLine = null, windTrueTip = null;
 let windApparentLine = null, windApparentTip = null;
@@ -544,13 +552,15 @@ function updateVectorLines(){
     return [existingLine, existingTip];
   }
 
+  const windArrowLengthM = WIND_ARROW_LENGTH_PX * metersPerPixel(ownShip.lat);
+
   [windTrueLine, windTrueTip] = drawLine(
     windTrueLine, windTrueTip, getComputedStyle(document.documentElement).getPropertyValue('--wind-true').trim(),
-    ownShip.windTrueDir, WIND_ARROW_LENGTH_M
+    ownShip.windTrueDir, windArrowLengthM
   );
   [windApparentLine, windApparentTip] = drawLine(
     windApparentLine, windApparentTip, getComputedStyle(document.documentElement).getPropertyValue('--wind-apparent').trim(),
-    ownShip.windApparentDir, WIND_ARROW_LENGTH_M
+    ownShip.windApparentDir, windArrowLengthM
   );
   [drLine, drTip] = drawLine(
     drLine, drTip, getComputedStyle(document.documentElement).getPropertyValue('--dr-line').trim(),
@@ -559,6 +569,8 @@ function updateVectorLines(){
 }
 
 document.getElementById('windLinesToggle').addEventListener('change', updateVectorLines);
+// Nuolten ruutupikselipituus riippuu zoomtasosta -- piirrä uudelleen kun zoom muuttuu.
+map.on('zoomend', updateVectorLines);
 
 /* --- AIS-kohteet: kolmiot + nimitunniste ---
    Kohteet tulevat SignalK:n vessels-oliosta (paikallinen AIS-vastaanotin
