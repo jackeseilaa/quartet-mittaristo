@@ -20,6 +20,9 @@
     --amber:#e8a23d;
     --danger:#e05a4e;
     --ais-target:#e8a23d;
+    --wind-true:#4ade80;
+    --wind-apparent:#facc15;
+    --dr-line:#e879f9;
     --font-display:ui-monospace, 'SF Mono', 'Menlo', 'Consolas', monospace;
     --font-label:-apple-system, 'SF Pro Text', system-ui, sans-serif;
   }
@@ -35,6 +38,9 @@
     --amber:#e05a2e;
     --danger:#ff4136;
     --ais-target:#e05a2e;
+    --wind-true:#ff8a75;
+    --wind-apparent:#e05a2e;
+    --dr-line:#c73a3a;
   }
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   /* Estä iOS Safarin automaattinen tekstin suurentaminen (text autosizing) --
@@ -79,6 +85,8 @@
     text-decoration:none;
   }
   .icon-btn:active{ transform:scale(.97); }
+  .icon-btn.active{ border-color:var(--cyan); color:var(--cyan); }
+  .icon-btn.active .dot{ background:var(--cyan); box-shadow:0 0 4px var(--cyan); }
   .icon-btn .dot{ width:8px; height:8px; border-radius:50%; background:var(--cyan); }
   .badge{
     font-family:var(--font-display); font-size:10px; letter-spacing:.1em;
@@ -101,6 +109,16 @@
     font-size:10px;
   }
   .leaflet-control-attribution a{ color:var(--cyan) !important; }
+  .measure-tooltip{
+    background:var(--bg-panel) !important;
+    color:var(--text-hi) !important;
+    border:1px solid var(--hairline) !important;
+    font-family:var(--font-display);
+    font-size:12px;
+    font-weight:600;
+    box-shadow:0 2px 8px rgba(0,0,0,0.4);
+  }
+  .measure-tooltip::before{ border-top-color:var(--hairline) !important; }
 
   .own-ship-icon{
     filter:drop-shadow(0 0 4px rgba(63,208,201,0.7));
@@ -207,6 +225,7 @@
     <div class="badge" id="connBadge">—</div>
     <a class="icon-btn" href="index.html">Mittaristo</a>
     <div class="icon-btn" id="centerToggle"><span class="dot"></span>Keskitä</div>
+    <div class="icon-btn" id="measureToggle"><span class="dot"></span>Mittaa</div>
     <div class="icon-btn" id="settingsToggle"><span class="dot"></span>Asetukset</div>
     <div class="icon-btn" id="nightToggle"><span class="dot"></span><span id="nightLabel">Yötila pois</span></div>
   </div>
@@ -238,6 +257,15 @@
   <h3>Merenkulkusymbolit</h3>
   <label style="margin-bottom:12px; display:block;"><input type="checkbox" id="seamarkToggle" checked> OpenSeaMap (poijut, loistot, väylät)</label>
 
+  <h3>Tuuli- ja ennustenuolet</h3>
+  <label style="margin-bottom:12px; display:block;"><input type="checkbox" id="windLinesToggle" checked> Näytä tuuli/ennuste kartalla</label>
+
+  <h3 style="margin-top:16px;">Tallennus (jälki/reitti)</h3>
+  <button class="drawer-btn" id="deviceAuthBtn">Ota tallennus käyttöön</button>
+  <div class="note" id="deviceAuthStatus">
+    Jälkien ja reittien tallentaminen vaatii kertaluontoisen luvan SignalK:lta. Paina nappia, hyväksy pyyntö SignalK:n admin-sivulla (<code id="deviceAuthAdminHint">:3000/admin</code> → Security → Access Requests), tämä laite muistaa luvan sen jälkeen.
+  </div>
+
   <h3 style="margin-top:16px;">Offline-käyttö</h3>
   <button class="drawer-btn" id="downloadAreaBtn">Lataa näkyvä alue offline</button>
   <div class="note" id="downloadProgress">
@@ -256,8 +284,8 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.7.0';
-const APP_BUILD = '2026-08-06';
+const APP_VERSION = 'v2.10.0';
+const APP_BUILD = '2026-08-08';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 /* ============================================================
@@ -279,7 +307,11 @@ const ownShip = {
   hasHeading: false,  // true heti kun navigation.headingTrue on saatu edes kerran
   cog: 0,             // kurssi yli pohjan, aina VTG:stä — näytetään aina erikseen
   sog: 0,
-  depth: null         // syvyys pinnasta (environment.depth.belowSurface), m
+  depth: null,        // syvyys pinnasta (environment.depth.belowSurface), m
+  windTrueDir: null,      // tosi tuulen suunta, absoluuttinen kompassisuunta (aste) -- null kunnes saatu
+  windTrueSpeed: 0,
+  windApparentDir: null,  // näennäisen tuulen suunta, absoluuttinen kompassisuunta (aste)
+  windApparentSpeed: 0
 };
 
 // Vain kartan alkunäkymän keskitystä varten ennen ensimmäistä oikeaa sijaintia
@@ -287,6 +319,83 @@ const ownShip = {
 const INITIAL_VIEW = { lat: 60.1856, lon: 25.0234 };
 
 function wrap360(deg){ return ((deg % 360) + 360) % 360; }
+
+// Pallomainen approksimaatio riittää näin lyhyille (< 1mi) etäisyyksille --
+// laskee pisteen annetusta lähtöpisteestä suuntaan ja etäisyyteen (m).
+// Käytetään sekä tuulinuolille että 30min-ennustesijainnille (DR-viiva).
+function destinationPoint(lat, lon, bearingDeg, distanceM){
+  const R = 6371000;
+  const brng = bearingDeg * Math.PI / 180;
+  const lat1 = lat * Math.PI / 180;
+  const lon1 = lon * Math.PI / 180;
+  const angDist = distanceM / R;
+  const lat2 = Math.asin(Math.sin(lat1) * Math.cos(angDist) + Math.cos(lat1) * Math.sin(angDist) * Math.cos(brng));
+  const lon2 = lon1 + Math.atan2(
+    Math.sin(brng) * Math.sin(angDist) * Math.cos(lat1),
+    Math.cos(angDist) - Math.sin(lat1) * Math.sin(lat2)
+  );
+  return [lat2 * 180 / Math.PI, lon2 * 180 / Math.PI];
+}
+
+// Etäisyys kahden pisteen välillä (haversine), metreinä.
+function haversineDistanceM(lat1, lon1, lat2, lon2){
+  const R = 6371000;
+  const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Tosisuuntima pisteestä 1 pisteeseen 2, astetta (0-360).
+function initialBearingDeg(lat1, lon1, lat2, lon2){
+  const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return wrap360(Math.atan2(y, x) * 180 / Math.PI);
+}
+
+/* --- Mittaustyökalu: matka + tosisuuntima kahden klikatun pisteen välillä ---
+   "Mittaa"-nappi kytkee tilan päälle. Ensimmäinen napautus asettaa pisteen A,
+   toinen pisteen B ja piirtää viivan + tuloksen. Kolmas napautus aloittaa
+   uuden mittauksen siitä pisteestä. Ei riipu SignalK:sta millään tavalla --
+   puhtaasti selainpuolen geometriaa. */
+const METERS_PER_NM = 1852;
+let measureActive = false;
+let measurePointA = null;
+let measureLine = null;
+let measureMarkerA = null, measureMarkerB = null;
+
+function clearMeasurement(){
+  if (measureLine) { map.removeLayer(measureLine); measureLine = null; }
+  if (measureMarkerA) { map.removeLayer(measureMarkerA); measureMarkerA = null; }
+  if (measureMarkerB) { map.removeLayer(measureMarkerB); measureMarkerB = null; }
+  measurePointA = null;
+}
+
+function onMeasureMapClick(e){
+  if (!measureActive) return;
+  const { lat, lng } = e.latlng;
+  if (!measurePointA || measureLine) {
+    // Ensimmäinen piste (tai edellinen mittaus oli jo valmis -> aloita uusi)
+    clearMeasurement();
+    measurePointA = [lat, lng];
+    measureMarkerA = L.circleMarker(measurePointA, {
+      radius: 5, color: '#fff', fillColor: '#fff', fillOpacity: 1, weight: 2
+    }).addTo(map);
+    return;
+  }
+  const distM = haversineDistanceM(measurePointA[0], measurePointA[1], lat, lng);
+  const bearing = initialBearingDeg(measurePointA[0], measurePointA[1], lat, lng);
+  const distNm = distM / METERS_PER_NM;
+  measureMarkerB = L.circleMarker([lat, lng], {
+    radius: 5, color: '#fff', fillColor: '#fff', fillOpacity: 1, weight: 2
+  }).addTo(map);
+  measureLine = L.polyline([measurePointA, [lat, lng]], { color: '#fff', weight: 2, dashArray: '6 6' })
+    .bindTooltip(`${distNm.toFixed(2)} mi · ${Math.round(bearing)}°T`, { permanent: true, direction: 'center', className: 'measure-tooltip' })
+    .addTo(map);
+}
 
 /* --- Kartta ---
    zoomControl:false + oma L.control.zoom({position:'topright'}) alempana,
@@ -398,6 +507,59 @@ function ownShipIcon(headingDeg){
 // AIS-kohteilla (entry.marker) — ei koskaan piirretä väärää alkupaikkaa.
 let ownShipMarker = null;
 
+/* --- Tuuli- ja ennustenuolet (samaan tapaan kuin KIP:n chartplotter-widget) ---
+   Kolme viivaa omalta sijainnilta: tosi tuulen suunta, näennäisen tuulen
+   suunta (molemmat kiinteän pituisia, 0.08mi), ja 30min dead-reckoning
+   -ennuste (pituus = SOG*30min, suunta COG). Kaikki nuolen suunnat ovat
+   absoluuttisia kompassisuuntia laskettuna ownShip.headingista (paras
+   arvio keulan suunnasta) + suhteellisesta tuulikulmasta. */
+const WIND_ARROW_LENGTH_M = 150; // ~0.08mi, kiinteä pituus tuulinuolille
+const DR_MINUTES = 10;
+let windTrueLine = null, windTrueTip = null;
+let windApparentLine = null, windApparentTip = null;
+let drLine = null, drTip = null;
+
+function makeTipMarker(color){
+  return L.circleMarker([0, 0], { radius: 4, color, fillColor: color, fillOpacity: 1, weight: 1 });
+}
+
+function updateVectorLines(){
+  if (ownShip.lat === null || ownShip.lon === null) return;
+  const showLines = document.getElementById('windLinesToggle').checked;
+  const origin = [ownShip.lat, ownShip.lon];
+
+  function drawLine(existingLine, existingTip, color, bearingDeg, distanceM){
+    if (!showLines || distanceM <= 0 || bearingDeg === null) {
+      if (existingLine) { map.removeLayer(existingLine); map.removeLayer(existingTip); }
+      return [null, null];
+    }
+    const end = destinationPoint(ownShip.lat, ownShip.lon, bearingDeg, distanceM);
+    if (!existingLine) {
+      const line = L.polyline([origin, end], { color, weight: 3, opacity: 0.85 }).addTo(map);
+      const tip = makeTipMarker(color).setLatLng(end).addTo(map);
+      return [line, tip];
+    }
+    existingLine.setLatLngs([origin, end]);
+    existingTip.setLatLng(end);
+    return [existingLine, existingTip];
+  }
+
+  [windTrueLine, windTrueTip] = drawLine(
+    windTrueLine, windTrueTip, getComputedStyle(document.documentElement).getPropertyValue('--wind-true').trim(),
+    ownShip.windTrueDir, WIND_ARROW_LENGTH_M
+  );
+  [windApparentLine, windApparentTip] = drawLine(
+    windApparentLine, windApparentTip, getComputedStyle(document.documentElement).getPropertyValue('--wind-apparent').trim(),
+    ownShip.windApparentDir, WIND_ARROW_LENGTH_M
+  );
+  [drLine, drTip] = drawLine(
+    drLine, drTip, getComputedStyle(document.documentElement).getPropertyValue('--dr-line').trim(),
+    ownShip.sog > 0 ? ownShip.cog : null, ownShip.sog * 0.514444 * DR_MINUTES * 60
+  );
+}
+
+document.getElementById('windLinesToggle').addEventListener('change', updateVectorLines);
+
 /* --- AIS-kohteet: kolmiot + nimitunniste ---
    Kohteet tulevat SignalK:n vessels-oliosta (paikallinen AIS-vastaanotin
    tai muu lähde), ei mock-datasta — ks. connectToSignalK() koodin lopussa.
@@ -464,6 +626,112 @@ document.getElementById('centerToggle').addEventListener('click', () => {
     map.setView([ownShip.lat, ownShip.lon], map.getZoom());
   }
 });
+
+/* --- Mittaustyökalun kytkennät (vasta nyt kun map on olemassa) --- */
+map.on('click', onMeasureMapClick);
+document.getElementById('measureToggle').addEventListener('click', (e) => {
+  measureActive = !measureActive;
+  e.currentTarget.classList.toggle('active', measureActive);
+  if (!measureActive) clearMeasurement();
+});
+
+/* ============================================================
+   LAITETUNNUS (device access token) jälki/reitti-tallennusta varten.
+   SignalK sallii lukemisen ilman kirjautumista (allow_readonly), mutta
+   kirjoittaminen (POST/PUT resources/tracks, resources/routes) vaatii
+   aina oikean readwrite/admin-tunnistautumisen -- ei ratkaista pelkillä
+   ACL-säännöillä. Sen sijaan pyydetään kertaalleen SignalK:n oma
+   "device access request" -token (https://signalk.org/specification/
+   .../doc/access_requests.html): laite lähettää clientId+kuvauksen,
+   admin hyväksyy kerran SignalK:n admin-sivulla, ja saatu JWT-token
+   tallennetaan pysyvästi tähän selaimeen (localStorage) -- ei
+   käyttäjälle näkyvää kirjautumisruutua enää sen jälkeen.
+   ============================================================ */
+const DEVICE_ID_KEY = 'quartetDeviceClientId';
+const DEVICE_TOKEN_KEY = 'quartetDeviceToken';
+
+function getOrCreateClientId(){
+  let id = localStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id = (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    }));
+    localStorage.setItem(DEVICE_ID_KEY, id);
+  }
+  return id;
+}
+
+function getDeviceToken(){
+  return localStorage.getItem(DEVICE_TOKEN_KEY);
+}
+
+function setDeviceAuthStatus(text){
+  document.getElementById('deviceAuthStatus').textContent = text;
+}
+
+function refreshDeviceAuthButton(){
+  const btn = document.getElementById('deviceAuthBtn');
+  document.getElementById('deviceAuthAdminHint').textContent = `${location.hostname}:3000/admin`;
+  if (getDeviceToken()) {
+    btn.textContent = 'Tallennus käytössä ✓';
+    btn.disabled = false;
+  } else {
+    btn.textContent = 'Ota tallennus käyttöön';
+  }
+}
+
+async function requestDeviceAccess(){
+  const btn = document.getElementById('deviceAuthBtn');
+  btn.disabled = true;
+  const clientId = getOrCreateClientId();
+  const host = location.hostname + ':3000';
+  try {
+    btn.textContent = 'Lähetetään pyyntöä…';
+    const res = await fetch(`http://${host}/signalk/v1/access/requests`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, description: 'Quartet kartta.html (jälki/reitti)' })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { href } = await res.json();
+    btn.textContent = 'Odottaa hyväksyntää…';
+    setDeviceAuthStatus(`Hyväksy pyyntö SignalK:n admin-sivulla (${host}/admin → Security → Access Requests). Tämä ikkuna tarkistaa tilan automaattisesti.`);
+    // Pollaa hyväksyntää kunnes valmis tai aikakatkaisu (5 min)
+    const deadline = Date.now() + 5 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const pollRes = await fetch(`http://${host}${href}`);
+      const pollData = await pollRes.json();
+      if (pollData.state === 'COMPLETED') {
+        if (pollData.accessRequest && pollData.accessRequest.permission === 'APPROVED') {
+          localStorage.setItem(DEVICE_TOKEN_KEY, pollData.accessRequest.token);
+          setDeviceAuthStatus('Lupa hyväksytty — jälkien ja reittien tallennus on nyt käytössä tällä laitteella.');
+          refreshDeviceAuthButton();
+          return;
+        } else {
+          setDeviceAuthStatus('Pyyntö hylättiin SignalK:n admin-sivulla. Yritä uudelleen jos tämä oli vahinko.');
+          btn.disabled = false;
+          btn.textContent = 'Ota tallennus käyttöön';
+          return;
+        }
+      }
+    }
+    setDeviceAuthStatus('Pyyntö vanheni (5 min) ilman hyväksyntää. Yritä uudelleen.');
+    btn.disabled = false;
+    btn.textContent = 'Ota tallennus käyttöön';
+  } catch (err) {
+    setDeviceAuthStatus(`Pyyntö epäonnistui: ${err.message}`);
+    btn.disabled = false;
+    btn.textContent = 'Ota tallennus käyttöön';
+  }
+}
+
+document.getElementById('deviceAuthBtn').addEventListener('click', () => {
+  if (getDeviceToken()) return; // jo käytössä, ei tehdä mitään
+  requestDeviceAccess();
+});
+refreshDeviceAuthButton();
 
 /* --- Asetuspaneeli --- */
 const drawer = document.getElementById('settingsDrawer');
@@ -620,6 +888,19 @@ function connectToSignalK(host) {
               ownShip.sog = v.value * 1.94384; break; // m/s -> kt
             case 'environment.depth.belowSurface':
               ownShip.depth = v.value; break; // m
+            case 'environment.wind.speedTrue':
+              ownShip.windTrueSpeed = v.value; break; // m/s
+            case 'environment.wind.angleTrueWater':
+            case 'environment.wind.angleTrueGround':
+              // Suhteellinen kulma (SignalK: negatiivinen = paapuuri) + keulan
+              // suunta -> absoluuttinen kompassisuunta josta tuuli tulee.
+              ownShip.windTrueDir = wrap360(ownShip.heading + v.value * 180 / Math.PI);
+              break;
+            case 'environment.wind.speedApparent':
+              ownShip.windApparentSpeed = v.value; break; // m/s
+            case 'environment.wind.angleApparent':
+              ownShip.windApparentDir = wrap360(ownShip.heading + v.value * 180 / Math.PI);
+              break;
           }
           if (ownShip.lat !== null && ownShip.lon !== null) {
             if (!ownShipMarker) {
@@ -637,6 +918,7 @@ function connectToSignalK(host) {
             document.getElementById('hudSog').textContent = ownShip.sog.toFixed(1);
             document.getElementById('hudCog').textContent = Math.round(ownShip.cog) + '°';
             document.getElementById('hudDepth').textContent = ownShip.depth === null ? '—' : ownShip.depth.toFixed(1);
+            updateVectorLines();
           }
         } else if (context && context.startsWith('vessels.')) {
           let entry = aisVessels.get(context);
