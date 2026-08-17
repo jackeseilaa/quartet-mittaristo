@@ -284,8 +284,8 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.10.5';
-const APP_BUILD = '2026-08-13';
+const APP_VERSION = 'v2.11.0';
+const APP_BUILD = '2026-08-17';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 /* ============================================================
@@ -648,12 +648,39 @@ document.getElementById('nightToggle').addEventListener('click', () => {
   document.getElementById('nightLabel').textContent = isNight ? 'Yötila päällä' : 'Yötila pois';
 });
 
-/* --- Keskitä kartta oman veneen sijaintiin --- */
-document.getElementById('centerToggle').addEventListener('click', () => {
+/* --- Keskitä kartta oman veneen sijaintiin, "Seuraa"-tila ---
+   Ennen "Keskitä" keskitti kartan vain kerran klikkaushetkellä, jolloin
+   kartta jäi jälkeen heti kun vene liikkui -- ei oikeaa reaaliaikaista
+   seurantaa. Nyt napista tulee päälle/pois-kytkin: päällä ollessaan kartta
+   keskittyy automaattisesti jokaisella sijaintipäivityksellä. Kytkeytyy
+   itsestään pois jos käyttäjä raahaa karttaa käsin (dragstart), ettei
+   automaattikeskitys "tempaisi" karttaa takaisin kesken selailun --
+   ohjelmallinen setView() ei lasketa raahaukseksi (programmaticMove-lippu).
+   Sama kuvake näyttää tilan (.active-luokka, sama tyyli kuin Mittaa-napissa). */
+let followMode = false;
+let programmaticMove = false;
+const centerBtn = document.getElementById('centerToggle');
+
+function centerOnOwnShip(){
   if (ownShip.lat !== null && ownShip.lon !== null) {
+    programmaticMove = true;
     map.setView([ownShip.lat, ownShip.lon], map.getZoom());
   }
+}
+
+centerBtn.addEventListener('click', () => {
+  followMode = !followMode;
+  centerBtn.classList.toggle('active', followMode);
+  if (followMode) centerOnOwnShip();
 });
+
+map.on('dragstart', () => {
+  if (!programmaticMove && followMode) {
+    followMode = false;
+    centerBtn.classList.remove('active');
+  }
+});
+map.on('moveend', () => { programmaticMove = false; });
 
 /* --- Mittaustyökalun kytkennät (vasta nyt kun map on olemassa) ---
    Kuunnellaan klikkauksia suoraan DOM-tasolta capture-vaiheessa (ennen
@@ -966,6 +993,7 @@ function connectToSignalK(host) {
             document.getElementById('hudCog').textContent = Math.round(ownShip.cog) + '°';
             document.getElementById('hudDepth').textContent = ownShip.depth === null ? '—' : ownShip.depth.toFixed(1);
             updateVectorLines();
+            if (followMode) centerOnOwnShip();
           }
         } else if (context && context.startsWith('vessels.')) {
           let entry = aisVessels.get(context);
