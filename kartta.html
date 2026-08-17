@@ -284,7 +284,7 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.11.0';
+const APP_VERSION = 'v2.11.1';
 const APP_BUILD = '2026-08-17';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
@@ -988,7 +988,8 @@ function connectToSignalK(host) {
             }
             document.getElementById('ownShipStatus').textContent =
               `OMA VENE  SOG ${ownShip.sog.toFixed(1)} kt · COG ${Math.round(ownShip.cog)}°`
-              + (ownShip.hasHeading ? ` · HDG ${Math.round(ownShip.heading)}°` : '');
+              + (ownShip.hasHeading ? ` · HDG ${Math.round(ownShip.heading)}°` : '')
+              + ` · Syvyys ${ownShip.depth === null ? '—' : ownShip.depth.toFixed(1) + ' m'}`;
             document.getElementById('hudSog').textContent = ownShip.sog.toFixed(1);
             document.getElementById('hudCog').textContent = Math.round(ownShip.cog) + '°';
             document.getElementById('hudDepth').textContent = ownShip.depth === null ? '—' : ownShip.depth.toFixed(1);
