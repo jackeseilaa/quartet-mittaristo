@@ -425,8 +425,8 @@
    VERSIONUMERO — kasvatetaan jokaisen muutoksen yhteydessä,
    niin näet suoraan käyttöliittymästä onko sinulla uusin versio.
    ============================================================ */
-const APP_VERSION = 'v3.4.0';
-const APP_BUILD = '2026-08-13';
+const APP_VERSION = 'v3.5.0';
+const APP_BUILD = '2026-08-17';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 const state = {
@@ -847,7 +847,20 @@ function animateNeedle(ts){
   const target = windMode === 'apparent' ? dispAWA : dispTWA;
   displayedNeedleAngle = wrap360(displayedNeedleAngle + shortestDelta(displayedNeedleAngle, target) * angleAlpha);
   document.getElementById('windNeedle').setAttribute('transform', `rotate(${displayedNeedleAngle} 150 150)`);
-  document.getElementById('windAngleValue').textContent = `${Math.round(target)}°`;
+
+  // Lukema ja neula näytetään sivuittaisena kulmana (0-180° styyrpuurille/STB
+  // tai paapuurille/BB), ei raakana 0-360° kompassilukemana -- nousukulmien
+  // arviointi luovittaessa on paljon helpompaa kun näkee heti kummalle
+  // puolelle ja kuinka monta astetta tuuli on, sen sijaan että pitäisi itse
+  // laskea esim. "355°" tarkoittavan "5° paapuurilla". STB=punainen,
+  // BB=vihreä, sama väritys kuin nousukulmasektoreissa (buildNoGoZone).
+  const signedAngle = target > 180 ? target - 360 : target;
+  const side = signedAngle > 0.5 ? 'STB' : (signedAngle < -0.5 ? 'BB' : '');
+  const sideColor = side === 'STB' ? 'var(--wedge-red)' : side === 'BB' ? 'var(--wedge-green)' : 'var(--text-hi)';
+  document.getElementById('windAngleValue').textContent = `${Math.round(Math.abs(signedAngle))}° ${side}`.trim();
+  document.getElementById('windAngleValue').style.color = sideColor;
+  document.getElementById('windNeedle').querySelector('.needle-shape').style.fill = sideColor;
+
   document.getElementById('windSpeedValue').textContent = (windMode === 'apparent' ? dispAWS : dispTWS).toFixed(1);
 
   requestAnimationFrame(animateNeedle);
