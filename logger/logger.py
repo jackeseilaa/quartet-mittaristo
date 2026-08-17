@@ -19,8 +19,8 @@ INTERVAL_S = 10  # kuinka usein piste kirjataan
 
 CSV_HEADER = [
     "timestamp", "lat", "lon", "sog_kt", "cog_deg", "heading_deg", "depth_m",
-    "wind_true_speed_kt", "wind_true_angle_deg",
-    "wind_apparent_speed_kt", "wind_apparent_angle_deg",
+    "wind_true_speed_ms", "wind_true_angle_deg",
+    "wind_apparent_speed_ms", "wind_apparent_angle_deg",
 ]
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -68,10 +68,10 @@ def build_row(data):
         rad_to_deg(get_value(data, "navigation.courseOverGroundTrue")),
         rad_to_deg(get_value(data, "navigation.headingTrue")),
         get_value(data, "environment.depth.belowSurface"),
-        ms_to_kt(get_value(data, "environment.wind.speedTrue")),
+        get_value(data, "environment.wind.speedTrue"),
         rad_to_deg(get_value(data, "environment.wind.angleTrueWater")
                    or get_value(data, "environment.wind.angleTrueGround")),
-        ms_to_kt(get_value(data, "environment.wind.speedApparent")),
+        get_value(data, "environment.wind.speedApparent"),
         rad_to_deg(get_value(data, "environment.wind.angleApparent")),
     ]
 
