@@ -287,7 +287,7 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.12.0';
+const APP_VERSION = 'v2.13.0';
 const APP_BUILD = '2026-08-20';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
@@ -753,6 +753,7 @@ document.getElementById('measureToggle').addEventListener('click', (e) => {
    ============================================================ */
 const DEVICE_ID_KEY = 'quartetDeviceClientId';
 const DEVICE_TOKEN_KEY = 'quartetDeviceToken';
+const DEVICE_PENDING_HREF_KEY = 'quartetDevicePendingHref';
 
 function getOrCreateClientId(){
   let id = localStorage.getItem(DEVICE_ID_KEY);
@@ -780,8 +781,55 @@ function refreshDeviceAuthButton(){
   if (getDeviceToken()) {
     btn.textContent = 'Tallennus käytössä ✓';
     btn.disabled = false;
+  } else if (localStorage.getItem(DEVICE_PENDING_HREF_KEY)) {
+    btn.textContent = 'Odottaa hyväksyntää… (paina tarkistaaksesi)';
+    btn.disabled = false;
   } else {
     btn.textContent = 'Ota tallennus käyttöön';
+    btn.disabled = false;
+  }
+}
+
+async function pollAccessRequest(host, href){
+  const res = await fetch(`http://${host}${href}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function resolvePendingRequest(data){
+  localStorage.removeItem(DEVICE_PENDING_HREF_KEY);
+  if (data.accessRequest && data.accessRequest.permission === 'APPROVED') {
+    localStorage.setItem(DEVICE_TOKEN_KEY, data.accessRequest.token);
+    setDeviceAuthStatus('Lupa hyväksytty — jälkien ja reittien tallennus on nyt käytössä tällä laitteella.');
+  } else {
+    setDeviceAuthStatus('Pyyntö hylättiin SignalK:n admin-sivulla. Yritä uudelleen jos tämä oli vahinko.');
+  }
+  refreshDeviceAuthButton();
+}
+
+/* Tarkistaa mahdollisen aiemmin lähetetyn, yhä kesken olevan pyynnön heti
+   sivun latautuessa -- toisin kuin ennen, tämä EI enää vaadi että sama
+   välilehti pysyy auki koko 5 min odotuksen ajan. Mobiiliselaimet usein
+   lataavat taustalle jääneen välilehden uudelleen kun palaat admin-sivulta,
+   mikä aiemmin tuhosi koko odotustilan (JS-muuttujat) -- nyt tila luetaan
+   localStoragesta ja pyyntö voidaan tarkistaa uudelleen milloin tahansa. */
+async function checkPendingRequest(){
+  const href = localStorage.getItem(DEVICE_PENDING_HREF_KEY);
+  if (!href || getDeviceToken()) return;
+  const host = location.hostname + ':3000';
+  try {
+    const data = await pollAccessRequest(host, href);
+    if (data.state === 'COMPLETED') {
+      resolvePendingRequest(data);
+    } else {
+      setDeviceAuthStatus('Edellinen pyyntö odottaa yhä hyväksyntää SignalK:n admin-sivulla (Security → Access Requests). Hyväksy se siellä, avaa tämä sivu sen jälkeen uudelleen tai paina nappia.');
+    }
+  } catch (err) {
+    // Pyyntö ei ehkä ole enää voimassa (esim. vanhentunut palvelimella) --
+    // nollataan ettei jää ikuisesti jumiin odottamaan jotain mikä ei koskaan valmistu.
+    localStorage.removeItem(DEVICE_PENDING_HREF_KEY);
+    setDeviceAuthStatus('Aiempi pyyntö ei ole enää voimassa. Paina "Ota tallennus käyttöön" aloittaaksesi uuden.');
+    refreshDeviceAuthButton();
   }
 }
 
@@ -799,33 +847,27 @@ async function requestDeviceAccess(){
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const { href } = await res.json();
+    localStorage.setItem(DEVICE_PENDING_HREF_KEY, href);
     btn.textContent = 'Odottaa hyväksyntää…';
-    setDeviceAuthStatus(`Hyväksy pyyntö SignalK:n admin-sivulla (${host}/admin → Security → Access Requests). Tämä ikkuna tarkistaa tilan automaattisesti.`);
-    // Pollaa hyväksyntää kunnes valmis tai aikakatkaisu (5 min)
+    setDeviceAuthStatus(`Hyväksy pyyntö SignalK:n admin-sivulla (${host}/admin → Security → Access Requests). Voit sulkea tämän sivun välissä -- avaa se uudelleen hyväksynnän jälkeen, tilanne tarkistetaan silloin automaattisesti.`);
+    // Pollaa hyväksyntää tässä samalla jos välilehti pysyy elossa (5 min) --
+    // jos ei pysy, checkPendingRequest() jatkaa asiasta seuraavalla
+    // sivulatauksella tallennetun hrefin avulla, joten mikään ei jää jumiin.
     const deadline = Date.now() + 5 * 60 * 1000;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 3000));
-      const pollRes = await fetch(`http://${host}${href}`);
-      const pollData = await pollRes.json();
+      if (!localStorage.getItem(DEVICE_PENDING_HREF_KEY)) return; // joku muu (esim. checkPendingRequest) ehti jo ratkaista
+      const pollData = await pollAccessRequest(host, href);
       if (pollData.state === 'COMPLETED') {
-        if (pollData.accessRequest && pollData.accessRequest.permission === 'APPROVED') {
-          localStorage.setItem(DEVICE_TOKEN_KEY, pollData.accessRequest.token);
-          setDeviceAuthStatus('Lupa hyväksytty — jälkien ja reittien tallennus on nyt käytössä tällä laitteella.');
-          refreshDeviceAuthButton();
-          return;
-        } else {
-          setDeviceAuthStatus('Pyyntö hylättiin SignalK:n admin-sivulla. Yritä uudelleen jos tämä oli vahinko.');
-          btn.disabled = false;
-          btn.textContent = 'Ota tallennus käyttöön';
-          return;
-        }
+        resolvePendingRequest(pollData);
+        return;
       }
     }
-    setDeviceAuthStatus('Pyyntö vanheni (5 min) ilman hyväksyntää. Yritä uudelleen.');
+    setDeviceAuthStatus('Pyyntö odottaa yhä hyväksyntää. Voit hyväksyä sen milloin tahansa admin-sivulla -- avaa tämä sivu uudelleen sen jälkeen.');
     btn.disabled = false;
-    btn.textContent = 'Ota tallennus käyttöön';
   } catch (err) {
     setDeviceAuthStatus(`Pyyntö epäonnistui: ${err.message}`);
+    localStorage.removeItem(DEVICE_PENDING_HREF_KEY);
     btn.disabled = false;
     btn.textContent = 'Ota tallennus käyttöön';
   }
@@ -833,9 +875,14 @@ async function requestDeviceAccess(){
 
 document.getElementById('deviceAuthBtn').addEventListener('click', () => {
   if (getDeviceToken()) return; // jo käytössä, ei tehdä mitään
+  if (localStorage.getItem(DEVICE_PENDING_HREF_KEY)) {
+    checkPendingRequest(); // tarkista heti onko jo hyväksytty äläkä luo uutta (kaksoispyyntö -> HTTP 400)
+    return;
+  }
   requestDeviceAccess();
 });
 refreshDeviceAuthButton();
+checkPendingRequest();
 
 /* --- Asetuspaneeli --- */
 const drawer = document.getElementById('settingsDrawer');
