@@ -87,6 +87,8 @@
   .icon-btn:active{ transform:scale(.97); }
   .icon-btn.active{ border-color:var(--cyan); color:var(--cyan); }
   .icon-btn.active .dot{ background:var(--cyan); box-shadow:0 0 4px var(--cyan); }
+  #engineToggle.active{ border-color:var(--amber); color:var(--amber); }
+  #engineToggle.active .dot{ background:var(--amber); box-shadow:0 0 4px var(--amber); }
   .icon-btn .dot{ width:8px; height:8px; border-radius:50%; background:var(--cyan); }
   .badge{
     font-family:var(--font-display); font-size:10px; letter-spacing:.1em;
@@ -226,6 +228,7 @@
     <a class="icon-btn" href="index.html">Mittaristo</a>
     <div class="icon-btn" id="centerToggle"><span class="dot"></span>Keskitä</div>
     <div class="icon-btn" id="measureToggle"><span class="dot"></span>Mittaa</div>
+    <div class="icon-btn" id="engineToggle"><span class="dot"></span>Moottori</div>
     <div class="icon-btn" id="settingsToggle"><span class="dot"></span>Asetukset</div>
     <div class="icon-btn" id="nightToggle"><span class="dot"></span><span id="nightLabel">Yötila pois</span></div>
   </div>
@@ -284,8 +287,8 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.11.1';
-const APP_BUILD = '2026-08-17';
+const APP_VERSION = 'v2.12.0';
+const APP_BUILD = '2026-08-20';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 /* ============================================================
@@ -681,6 +684,33 @@ map.on('dragstart', () => {
   }
 });
 map.on('moveend', () => { programmaticMove = false; });
+
+/* --- Moottori-nappi ---
+   Merkitsee moottorikäytön quartet-loggerin CSV:hin (engine_on-sarake), jotta
+   konetunnit saadaan talteen ja polaarikäyrästä voidaan jatkossa suodattaa
+   moottorilla ajetut jaksot pois. Puhuu suoraan quartet-logger.py:n pienelle
+   HTTP-rajapinnalle (portti 8091, sama Pi, ei SignalK:n kautta -- ei vaadi
+   kirjautumista/laitelupaa). Toimii vain kun quartet-logger on käynnissä eli
+   Pi on QUARTET-verkossa; muulloin nappi näyttää virheen eikä kaadu. */
+const ENGINE_API = `http://${location.hostname}:8091`;
+const engineBtn = document.getElementById('engineToggle');
+let engineOn = false;
+
+function setEngineUI(on){
+  engineOn = on;
+  engineBtn.classList.toggle('active', on);
+  engineBtn.querySelector('.dot').nextSibling.textContent = on ? 'Moottori PÄÄLLÄ' : 'Moottori';
+}
+
+fetch(`${ENGINE_API}/engine`).then(r => r.json()).then(d => setEngineUI(d.on)).catch(() => {});
+
+engineBtn.addEventListener('click', () => {
+  const next = !engineOn;
+  fetch(`${ENGINE_API}/engine/${next ? 'on' : 'off'}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(d => setEngineUI(d.on))
+    .catch(() => alert('Ei yhteyttä lokittajaan (Pi ei ehkä QUARTET-verkossa) -- moottorimerkintä ei tallentunut.'));
+});
 
 /* --- Mittaustyökalun kytkennät (vasta nyt kun map on olemassa) ---
    Kuunnellaan klikkauksia suoraan DOM-tasolta capture-vaiheessa (ennen

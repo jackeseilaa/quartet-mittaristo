@@ -107,6 +107,8 @@
     user-select:none;
   }
   .night-toggle:active{ transform:scale(.97); }
+  #engineToggle.engine-on{ border-color:var(--amber); color:var(--amber); }
+  #engineToggle.engine-on .dot{ background:var(--amber); box-shadow:0 0 4px var(--amber); }
   .night-toggle .dot{
     width:8px; height:8px; border-radius:50%;
     background:var(--cyan);
@@ -319,6 +321,9 @@
     <div class="night-toggle" id="allDataToggle" role="button" aria-label="Kaikki data">
       <span class="dot"></span><span>Kaikki data</span>
     </div>
+    <div class="night-toggle" id="engineToggle" role="button" aria-label="Moottori">
+      <span class="dot"></span><span id="engineLabel">Moottori</span>
+    </div>
     <div class="night-toggle" id="nightToggle" role="button" aria-label="Yövalotila">
       <span class="dot"></span><span id="nightLabel">Yötila pois</span>
     </div>
@@ -425,8 +430,8 @@
    VERSIONUMERO — kasvatetaan jokaisen muutoksen yhteydessä,
    niin näet suoraan käyttöliittymästä onko sinulla uusin versio.
    ============================================================ */
-const APP_VERSION = 'v3.5.0';
-const APP_BUILD = '2026-08-17';
+const APP_VERSION = 'v3.6.0';
+const APP_BUILD = '2026-08-20';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
 const state = {
@@ -705,6 +710,27 @@ document.getElementById('nightToggle').addEventListener('click', () => {
   document.body.classList.toggle('night');
   const isNight = document.body.classList.contains('night');
   document.getElementById('nightLabel').textContent = isNight ? 'Yötila päällä' : 'Yötila pois';
+});
+
+/* --- Moottori-nappi -- ks. kartta.html:n vastaava kytkentä, sama API. */
+const ENGINE_API = `http://${location.hostname}:8091`;
+const engineBtn = document.getElementById('engineToggle');
+let engineOn = false;
+
+function setEngineUI(on){
+  engineOn = on;
+  engineBtn.classList.toggle('engine-on', on);
+  document.getElementById('engineLabel').textContent = on ? 'Moottori PÄÄLLÄ' : 'Moottori';
+}
+
+fetch(`${ENGINE_API}/engine`).then(r => r.json()).then(d => setEngineUI(d.on)).catch(() => {});
+
+engineBtn.addEventListener('click', () => {
+  const next = !engineOn;
+  fetch(`${ENGINE_API}/engine/${next ? 'on' : 'off'}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(d => setEngineUI(d.on))
+    .catch(() => alert('Ei yhteyttä lokittajaan (Pi ei ehkä QUARTET-verkossa) -- moottorimerkintä ei tallentunut.'));
 });
 
 /* ============================================================
