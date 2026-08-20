@@ -6,6 +6,7 @@ tai mistaan muusta laitteesta. Puhuu SignalK:lle paikallisen REST-rajapinnan
 kautta (ei websocketia, ei ulkoisia riippuvuuksia -- vain Python stdlib)."""
 import csv
 import json
+import math
 import os
 import signal
 import sys
@@ -19,6 +20,12 @@ SIGNALK_URL = "http://localhost:3000/signalk/v1/api/vessels/self"
 LOG_DIR = os.path.expanduser("~/quartet-logs")
 INTERVAL_S = 10  # kuinka usein piste kirjataan
 ENGINE_PORT = 8091  # kartta.html/index.html POSTaavat tanne Moottori-napista
+
+# GPX + index.json kopioidaan tanne istunnon paatyttya -- mittaristo.service
+# tarjoilee taman hakemiston staattisesti samalta portilta 8080 kuin
+# kartta.html:n, joten aiempien matkojen selaus ei tarvitse omaa API:a.
+TRACKS_DIR = os.path.expanduser("~/mittaristo/tracks")
+TRACKS_INDEX = os.path.join(TRACKS_DIR, "index.json")
 
 CSV_HEADER = [
     "timestamp", "lat", "lon", "sog_kt", "cog_deg", "heading_deg", "depth_m",
@@ -141,6 +148,70 @@ def build_row(data):
     ]
 
 
+def haversine_m(lat1, lon1, lat2, lon2):
+    r = 6371000
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def summarize_csv(csv_path):
+    """Laskee matkan pituuden (nm) ja pisteiden maaran suoraan CSV:sta --
+    kaytetaan tracks/index.json-manifestin tietoihin istunnon paatyttya."""
+    total_m = 0.0
+    prev = None
+    n = 0
+    start_t = end_t = None
+    with open(csv_path, newline="") as f:
+        for row in csv.DictReader(f):
+            n += 1
+            end_t = row.get("timestamp") or end_t
+            if start_t is None:
+                start_t = row.get("timestamp")
+            try:
+                lat, lon = float(row["lat"]), float(row["lon"])
+            except (ValueError, KeyError):
+                continue
+            if prev is not None:
+                total_m += haversine_m(prev[0], prev[1], lat, lon)
+            prev = (lat, lon)
+    return {
+        "start": start_t,
+        "end": end_t,
+        "n_points": n,
+        "distance_nm": round(total_m / 1852, 1),
+    }
+
+
+def publish_track(csv_path, gpx_path):
+    """Kopioi valmiin GPX:n mittaristo.servicen tarjoilemaan tracks/-kansioon
+    ja paivittaa index.json-manifestin, jotta kartta.html voi listata ja
+    ladata aiempia matkoja ilman erillista API:a."""
+    os.makedirs(TRACKS_DIR, exist_ok=True)
+    name = os.path.splitext(os.path.basename(gpx_path))[0]
+    dest_gpx = os.path.join(TRACKS_DIR, f"{name}.gpx")
+    with open(gpx_path, "rb") as src, open(dest_gpx, "wb") as dst:
+        dst.write(src.read())
+
+    summary = summarize_csv(csv_path)
+    entry = {"id": name, "gpx": f"{name}.gpx", **summary}
+
+    index = []
+    if os.path.exists(TRACKS_INDEX):
+        try:
+            with open(TRACKS_INDEX) as f:
+                index = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            index = []
+    index = [e for e in index if e.get("id") != name]
+    index.append(entry)
+    index.sort(key=lambda e: e.get("start") or "")
+    with open(TRACKS_INDEX, "w") as f:
+        json.dump(index, f, indent=2)
+
+
 def main():
     start_engine_server()
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -163,8 +234,10 @@ def main():
             gpx_path = csv_path.replace(".csv", ".gpx")
             csv_to_gpx(csv_path, gpx_path)
             print(f"[quartet-logger] kirjoitettu: {gpx_path}", flush=True)
+            publish_track(csv_path, gpx_path)
+            print(f"[quartet-logger] julkaistu tracks/-kansioon ja index.json paivitetty", flush=True)
         except Exception as err:
-            print(f"[quartet-logger] GPX-muunnos epaonnistui: {err}", flush=True)
+            print(f"[quartet-logger] GPX-muunnos/julkaisu epaonnistui: {err}", flush=True)
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, finalize_and_exit)

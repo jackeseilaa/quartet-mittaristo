@@ -229,6 +229,7 @@
     <div class="icon-btn" id="centerToggle"><span class="dot"></span>Keskitä</div>
     <div class="icon-btn" id="measureToggle"><span class="dot"></span>Mittaa</div>
     <div class="icon-btn" id="engineToggle"><span class="dot"></span>Moottori</div>
+    <div class="icon-btn" id="trailToggle"><span class="dot"></span>Jälki</div>
     <div class="icon-btn" id="settingsToggle"><span class="dot"></span>Asetukset</div>
     <div class="icon-btn" id="nightToggle"><span class="dot"></span><span id="nightLabel">Yötila pois</span></div>
   </div>
@@ -269,6 +270,14 @@
     Jälkien ja reittien tallentaminen vaatii kertaluontoisen luvan SignalK:lta. Paina nappia, hyväksy pyyntö SignalK:n admin-sivulla (<code id="deviceAuthAdminHint">:3000/admin</code> → Security → Access Requests), tämä laite muistaa luvan sen jälkeen.
   </div>
 
+  <h3 style="margin-top:16px;">Aiemmat matkat</h3>
+  <select id="tracksSelect" style="width:100%; padding:8px; margin-bottom:8px; background:var(--bg-panel-raised); color:var(--text-hi); border:1px solid var(--hairline); border-radius:8px; font-family:var(--font-label); font-size:13px;"></select>
+  <div style="display:flex; gap:8px; margin-bottom:8px;">
+    <button class="drawer-btn" id="showTrackBtn" style="flex:1;">Näytä kartalla</button>
+    <button class="drawer-btn" id="hideTrackBtn" style="flex:1;">Piilota</button>
+  </div>
+  <div class="note" id="tracksListNote">Ladataan…</div>
+
   <h3 style="margin-top:16px;">Offline-käyttö</h3>
   <button class="drawer-btn" id="downloadAreaBtn">Lataa näkyvä alue offline</button>
   <div class="note" id="downloadProgress">
@@ -287,7 +296,7 @@
 /* ============================================================
    VERSIONUMERO
    ============================================================ */
-const APP_VERSION = 'v2.13.0';
+const APP_VERSION = 'v2.14.0';
 const APP_BUILD = '2026-08-20';
 document.getElementById('versionBadge').textContent = `${APP_VERSION} · ${APP_BUILD}`;
 
@@ -712,6 +721,98 @@ engineBtn.addEventListener('click', () => {
     .catch(() => alert('Ei yhteyttä lokittajaan (Pi ei ehkä QUARTET-verkossa) -- moottorimerkintä ei tallentunut.'));
 });
 
+/* --- Live-jälki: piirtää kuljetun reitin viivana tämän istunnon ajalta.
+   Ei tallennu minnekään (nollautuu sivun päivityksellä) -- pysyvä
+   päivä/matkakohtainen tallennus tulee quartet-loggerin kautta, ks. alla.
+   Pisteitä lisätään harvakseltaan (10s väli) ettei viiva täyty tuhansista
+   pisteistä pitkän purjehduksen aikana. */
+const TRAIL_MIN_INTERVAL_MS = 10000;
+let trailActive = false;
+let trailPoints = [];
+let trailLine = null;
+let lastTrailPointTime = 0;
+
+function updateTrail(){
+  if (!trailActive || ownShip.lat === null || ownShip.lon === null) return;
+  const now = Date.now();
+  if (now - lastTrailPointTime < TRAIL_MIN_INTERVAL_MS) return;
+  lastTrailPointTime = now;
+  trailPoints.push([ownShip.lat, ownShip.lon]);
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--cyan').trim();
+  if (!trailLine) {
+    trailLine = L.polyline(trailPoints, { color, weight: 3, opacity: 0.75 }).addTo(map);
+  } else {
+    trailLine.setLatLngs(trailPoints);
+  }
+}
+
+document.getElementById('trailToggle').addEventListener('click', () => {
+  trailActive = !trailActive;
+  document.getElementById('trailToggle').classList.toggle('active', trailActive);
+  if (!trailActive && trailLine) {
+    map.removeLayer(trailLine);
+    trailLine = null;
+    trailPoints = [];
+  }
+});
+
+/* --- Aiemmat matkat: lukee quartet-loggerin tuottaman tracks/index.json:n
+   (kopioitu mittaristo/tracks/-kansioon jokaisen QUARTET-istunnon lopuksi,
+   ks. logger.py:n publish_track()) ja piirtää valitun matkan GPX:n
+   karttaan. Toimii samalta portilta 8080 kuin itse kartta.html, ei vaadi
+   erillistä API:a eikä laitelupaa. */
+let pastTrackLine = null;
+
+async function loadTracksIndex(){
+  const note = document.getElementById('tracksListNote');
+  const select = document.getElementById('tracksSelect');
+  try {
+    const res = await fetch('tracks/index.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const tracks = await res.json();
+    select.innerHTML = '';
+    tracks.slice().reverse().forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.gpx;
+      const dateStr = t.start ? new Date(t.start).toLocaleString('fi-FI', { dateStyle: 'short', timeStyle: 'short' }) : t.id;
+      opt.textContent = `${dateStr} · ${t.distance_nm} nm · ${t.n_points} pistettä`;
+      select.appendChild(opt);
+    });
+    note.textContent = tracks.length ? `${tracks.length} tallennettua matkaa.` : 'Ei vielä tallennettuja matkoja -- kertyy automaattisesti QUARTET-verkossa purjehdittaessa.';
+  } catch (err) {
+    note.textContent = 'Aiempien matkojen listaa ei saatu (Pi ehkä eri verkossa tai yhtään matkaa ei ole vielä tallentunut).';
+  }
+}
+
+function parseGpxLatLng(gpxText){
+  const doc = new DOMParser().parseFromString(gpxText, 'application/xml');
+  return Array.from(doc.getElementsByTagName('trkpt')).map(pt => [
+    parseFloat(pt.getAttribute('lat')), parseFloat(pt.getAttribute('lon'))
+  ]);
+}
+
+document.getElementById('showTrackBtn').addEventListener('click', async () => {
+  const file = document.getElementById('tracksSelect').value;
+  if (!file) return;
+  try {
+    const res = await fetch(`tracks/${file}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const pts = parseGpxLatLng(await res.text());
+    if (pastTrackLine) map.removeLayer(pastTrackLine);
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--text-mid').trim();
+    pastTrackLine = L.polyline(pts, { color, weight: 3, opacity: 0.85, dashArray: '2 6' }).addTo(map);
+    if (pts.length) map.fitBounds(pastTrackLine.getBounds(), { padding: [30, 30] });
+  } catch (err) {
+    alert('Reitin lataus epäonnistui: ' + err.message);
+  }
+});
+
+document.getElementById('hideTrackBtn').addEventListener('click', () => {
+  if (pastTrackLine) { map.removeLayer(pastTrackLine); pastTrackLine = null; }
+});
+
+loadTracksIndex();
+
 /* --- Mittaustyökalun kytkennät (vasta nyt kun map on olemassa) ---
    Kuunnellaan klikkauksia suoraan DOM-tasolta capture-vaiheessa (ennen
    Leafletin omaa tapahtumakäsittelyä), emme map.on('click', ...) -kautta.
@@ -1071,6 +1172,7 @@ function connectToSignalK(host) {
             document.getElementById('hudCog').textContent = Math.round(ownShip.cog) + '°';
             document.getElementById('hudDepth').textContent = ownShip.depth === null ? '—' : ownShip.depth.toFixed(1);
             updateVectorLines();
+            updateTrail();
             if (followMode) centerOnOwnShip();
           }
         } else if (context && context.startsWith('vessels.')) {
